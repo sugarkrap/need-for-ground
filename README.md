@@ -78,6 +78,45 @@ references turn out to be compiler-generated exception-unwind metadata
 rather than reachable gameplay code, so checking the actual call graph
 before assuming a string is "live" saves a lot of time).
 
+### 4. Widescreen / ultrawide patch
+
+```
+python3 tools/patch_widescreen.py \
+  --exe /path/to/unwrapped/speed2.exe \
+  --output speed2_widescreen.exe \
+  --width 2560 --height 1080
+```
+
+Baked into the binary, not a runtime DirectX hook. Patches two independent
+hardcoded 4:3-era values found by live-tracing which resolution actually
+feeds the real gameplay camera's projection matrix (the video-options
+resolution setting alone only affects the D3D backbuffer and two UI/overlay
+cameras - it does not reach the world camera's field of view). See
+`NOTES.md` for the full trace and why a second, similar-looking write site
+turned out to be dead code in normal single-player. Live-verified in an
+actual race: correct full-width fill with proper (non-stretched) FOV, not
+just backbuffer stretching.
+
+### 5. 2D UI letterboxing (menu/HUD/video aspect correction)
+
+```
+python3 tools/patch_letterbox_2d.py \
+  --exe /path/to/widescreen-patched/speed2.exe \
+  --output speed2_letterboxed.exe
+```
+
+Run after step 4 - the widescreen patch fixes the 3D camera's FOV, but the
+game's 2D UI (menu, HUD, splash video) has no aspect-ratio logic at all
+and just stretches to fill whatever viewport is active. This injects new
+code (there's no existing "shrink the viewport for 2D" call to patch) that
+narrows the viewport to a centered 4:3 rect before each UI/video draw
+call and restores it immediately after, computed from the *live*
+backbuffer resolution so it stays correct if that changes at runtime. See
+`NOTES.md` for the long list of confirmed-live wrong turns this took
+before landing on the actual fix - most of it isn't specific to this game
+and is worth reading before attempting a similar DirectX-hooking patch
+elsewhere.
+
 ## Setup
 
 ```
@@ -91,6 +130,12 @@ installable - see your distro's package or https://ghidra-sre.org/.
 ## Repo layout
 
 - `tools/unwrap.py` - the PE patcher (step 2 above)
+- `tools/patch_widescreen.py` - the widescreen/ultrawide patcher (step 4 above)
+- `tools/patch_letterbox_2d.py` / `patches/letterbox_2d.s` - the 2D UI
+  letterboxing patcher (step 5 above)
 - `analysis/emulate_stub.py` - the Unicorn-based stub emulator (step 1)
 - `analysis/ghidra_query.py` - Ghidra headless query helper (step 3)
+- `analysis/retype_and_decompile.py` - fixes a Ghidra type-propagation bug
+  (an incorrect DirectX vtable type spreading onto an unrelated
+  parameter) and re-decompiles a function
 - `NOTES.md` - reverse-engineering findings, what's solved vs. open
