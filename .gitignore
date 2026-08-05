@@ -1,0 +1,35 @@
+# Never commit game binaries/artifacts - this repo is tools only.
+*.exe
+*.dll
+*.bin
+*.pfd
+*.iso
+*.rar
+*.zip
+*.7z
+*.bun
+*.abk
+*.mxb
+*.csi
+*.viv
+
+# Ghidra project data embeds analyzed binary content
+*.gpr
+*.rep/
+ghidra-project/
+ghidra-projects/
+
+# analysis/working output
+out/
+output/
+dumps/
+scratch/
+scratchpad/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
