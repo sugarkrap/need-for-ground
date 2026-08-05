@@ -97,6 +97,9 @@ def main():
         elif info["direct_win32"]:
             category[addr] = "win32"
 
+    def base_category(cat):
+        return cat[len("transitive-"):] if cat.startswith("transitive-") else cat
+
     changed = True
     while changed:
         changed = False
@@ -105,7 +108,7 @@ def main():
                 continue
             for called in info["calls"]:
                 if called in category:
-                    category[addr] = f"transitive-{category[called]}"
+                    category[addr] = f"transitive-{base_category(category[called])}"
                     changed = True
                     break
 
