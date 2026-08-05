@@ -19,10 +19,13 @@
 ghidra-project/
 ghidra-projects/
 
-# analysis/working output
+# analysis/working output - bulk-decompiled pseudocode is a direct
+# derivative of the copyrighted game binary, same category as the binary
+# itself. Never commit it.
 out/
 output/
 dumps/
+decompiled/
 scratch/
 scratchpad/
 *.log
