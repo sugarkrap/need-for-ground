@@ -421,13 +421,71 @@ in the importer: Ghidra calls `LARGE_INTEGER`'s nested struct `s`, Wine calls it
 `u`, so `value.s.LowPart` does not compile. Rewritten narrowly, on the two field
 names that can appear, rather than by replacing `.s.` everywhere.
 
+### A TEB in %fs, so `__try` code runs
+
+MSVC-compiled 32-bit code reaches the TEB implicitly and constantly: `fs:[0]` is
+the SEH handler chain, which *every* function with a `__try` pushes onto and pops
+off; `fs:[0x2c]` is the TLS array; `fs:[0x34]` is `LastError`. Without a TEB such a
+function reads and writes through whatever `%fs` happens to hold, and inline SEH is
+the shape most of the C++ in this binary has - so this is the wall between "leaf
+functions work" and "call anything".
+
+i386 makes it cheap, and the reason is worth stating because it is the opposite of
+what x86_64 habits suggest: on i386 Linux glibc keeps its thread pointer in **`%gs`**,
+leaving `%fs` free - which is exactly why Windows uses `%fs` there. So
+`modify_ldt()` (the same mechanism Wine uses) points a private LDT entry at a TEB of
+our own, `%fs` is loaded with the resulting selector, and libc never notices.
+`native/src/loader/teb.c` is a few dozen lines because of that; on x86_64 the roles
+swap and the entry points fail cleanly instead.
+
+The test does not settle for "a field changed". It hands the original destructor at
+`0x40a1f0` - which MSVC gave an inline SEH prologue - a child object whose vtable
+points at a thunk of ours, so the original's own virtual call lands in our code
+*while its SEH record is still linked*:
+
+```
+ok - inside it, fs:[0] was 0xff814200 - a live SEH record in our TEB
+ok - and the record's handler is 0x00770fc8, the address MSVC pushed (0x770fc8)
+ok - it restored the chain to 0xffffffff on the way out
+ok - the PORTED copy linked its own record too (fs:[0] was 0xff814208 inside)
+```
+
+Reading the handler address back out of the record is the part that cannot be
+coincidence: `0x770fc8` is a constant in the original's prologue, so the chain head
+`%fs` reaches really is the record that code pushed.
+
+Two findings came out of it that are worth more than the test:
+
+- **`0x75d950` is not a function.** Ghidra decompiles it as
+  `ExceptionList = auStack_c; return;`, which reads like the perfect TEB test case.
+  It is MSVC's `__SEH_prolog`: it pushes an `EXCEPTION_REGISTRATION` record, links
+  it, moves the caller's return address to the top of the stack and `ret`s to it -
+  returning having permanently consumed 12 bytes of the caller's stack and
+  overwritten the caller's saved EBP. Calling it from C smashed the frame, and the
+  damage surfaced two functions later as unresolvable addresses plus a stack-canary
+  abort at exit, which is a thoroughly misleading place to start debugging. It is
+  now in the manifest's excluded list with that explanation.
+- **Ghidra's `(*(code *)...)(1)` has lost the calling convention.** The original
+  call site is `__thiscall` - `this` in ECX, callee pops the argument - and the
+  ported copy compiles to `__cdecl`. Both run here only because the test supplies a
+  matching thunk per side. Vtable calls in ported code will need the convention put
+  back by hand; the test says so where it does it.
+
+Inline SEH also needed one importer feature: those functions name their handler and
+their vtables as *addresses* - `&LAB_00770fc8`, `&PTR_FUN_00784680`. The name is the
+address, and the address is valid the moment the PE is mapped at its own base, so
+the importer binds the address-of form to a literal. A bare `DAT_...` read is
+refused instead, because its width is exactly what Ghidra did not commit to and
+guessing dword when it is a byte would corrupt a neighbour silently. `LAB_` names
+that are `goto` targets are left alone - Ghidra uses the prefix for both, and
+`_strncpy`'s loop is real C labels.
+
 ### What comes next
 
 1. Widen the manifest. The renderer scope in `../DIRECTX_SCOPE.md` is the useful
    direction, since that is where the D3D9 boundary and both widescreen fixes
    already are.
-2. Call an original function that *uses* an import, end to end - the IAT is filled,
-   so this should now work, and it is the next thing to prove.
-3. The TEB and `%fs`. Any function with a `__try` block or a `__declspec(thread)`
-   access reads glibc's TLS through `%fs` and misbehaves. Wine solves it with a
-   custom LDT entry via `modify_ldt()`; that is the next real piece of work.
+2. Real SEH, now that the chain is reachable: `RaiseException`/`RtlUnwind` still
+   abort rather than walking it (gap 2 above). The TEB was the prerequisite.
+3. A TEB per thread as soon as the port creates threads - `nfsu2_teb_install()` is
+   per-thread by construction, so `CreateThread` should call it on the new thread.

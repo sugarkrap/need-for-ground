@@ -183,6 +183,58 @@ const extractSignature = (text: string): string | null => {
 const fixLargeIntegerFields = (text: string): string =>
   text.replace(/\.s\.LowPart\b/g, ".u.LowPart").replace(/\.s\.HighPart\b/g, ".u.HighPart");
 
+/**
+ * Bind Ghidra's address-named data symbols to the addresses their names encode.
+ *
+ * Any function with a `__try` - which is most of the C++ in this binary - names
+ * its SEH handler as a label and its vtables as pointers:
+ *
+ *   puStack_8 = &LAB_00770fc8;          the exception handler MSVC emitted
+ *   *param_1 = &PTR_FUN_00784680;       a vtable
+ *
+ * Those are not undeclared variables to be stubbed: the name *is* the address,
+ * and the address is valid as soon as the PE is mapped at its own base (see
+ * loader/pe_loader.c). So `&LAB_00770fc8` becomes `(void *)0x00770fc8`, which is
+ * the same value the original machine code pushes.
+ *
+ * Only the address-of form is rewritten. A bare `DAT_00819d24` is a *read* of a
+ * global whose width Ghidra did not commit to, and inventing one - dword, say -
+ * would silently corrupt neighbouring data if it were a byte. Those are reported
+ * and the entry is refused, in the same spirit as the excluded list: better a
+ * loud "this needs a type" than a plausible wrong guess.
+ *
+ * `LAB_` needs one more distinction, because Ghidra uses the prefix for two
+ * unrelated things. When it cannot express a jump structurally it emits a real C
+ * label - `LAB_0075c4d3:` with `goto LAB_0075c4d3;`, which is how _strncpy's
+ * word-at-a-time loop comes out - and that is already valid C that must be left
+ * exactly as it is. Any name this file declares as a label is therefore skipped
+ * entirely, rather than rewritten into an address or reported as untyped.
+ */
+const IMAGE_SYMBOL = /(&\s*)?\b((?:LAB|DAT|UNK|PTR)(?:_[A-Za-z][A-Za-z0-9]*)*_([0-9a-f]{8}))\b/g;
+
+const collectLabels = (text: string): Set<string> => {
+  const labels = new Set<string>();
+  for (const match of text.matchAll(/^\s*(\w+):(?!:)/gm)) labels.add(match[1]);
+  for (const match of text.matchAll(/\bgoto\s+(\w+)\s*;/g)) labels.add(match[1]);
+  return labels;
+};
+
+const bindImageSymbols = (text: string): { text: string; bound: number; unbound: string[] } => {
+  const labels = collectLabels(text);
+  const unbound = new Set<string>();
+  let bound = 0;
+  const result = text.replace(IMAGE_SYMBOL, (match, ampersand, name, hex) => {
+    if (labels.has(name)) return match;
+    if (!ampersand) {
+      unbound.add(name);
+      return match;
+    }
+    bound++;
+    return `(void *)0x${hex}`;
+  });
+  return { text: result, bound, unbound: [...unbound] };
+};
+
 const applyConventions = (text: string): { text: string; used: string | null } => {
   let used: string | null = null;
   let result = text;
@@ -199,10 +251,11 @@ const applyConventions = (text: string): { text: string; used: string | null } =
 const normaliseSource = (
   entry: Entry,
   sourcePath: string,
-): { text: string; used: string | null } => {
+): { text: string; used: string | null; bound: number; unbound: string[] } => {
   const original = Deno.readTextFileSync(sourcePath);
   const { text: converted, used } = applyConventions(original);
-  const body = fixLargeIntegerFields(converted);
+  const { text: linked, bound, unbound } = bindImageSymbols(fixLargeIntegerFields(converted));
+  const body = linked;
   const fileName = sourcePath.split("/").pop() ?? sourcePath;
 
   const header = [
@@ -217,12 +270,28 @@ const normaliseSource = (
     " */",
     "#include <nfsu2/ghidra_types.h>",
     '#include "game_functions.h"',
+    // After game_functions.h, which pulls in windows.h: Wine's NT_TIB has a
+    // member called ExceptionList, so the macro must not be defined first.
+    "#include <nfsu2/ghidra_teb.h>",
     "",
+    // Only where a bound address actually appears, and for the narrowest reason:
+    // some of them are stored into slots Ghidra typed `undefined4`, which is what
+    // a vtable pointer looks like to a decompiler that has not seen a class. The
+    // pointer-to-integer assignment is the intended meaning, so the diagnostic
+    // has nothing to say here - and stays on in every other generated file.
+    ...(bound > 0
+      ? [
+        "/* Image addresses below are bound to literals (see",
+        " * tools/import_decompiled.ts); some land in `undefined4` slots. */",
+        '#pragma GCC diagnostic ignored "-Wint-conversion"',
+        "",
+      ]
+      : []),
     `#line 1 "${fileName}"`,
     "",
   ].join("\n");
 
-  return { text: header + body, used };
+  return { text: header + body, used, bound, unbound };
 };
 
 /**
@@ -365,6 +434,7 @@ const main = (): number => {
 
   const declarations: Array<[Entry, string]> = [];
   const missing: Entry[] = [];
+  const untyped: Array<[Entry, string[]]> = [];
   let written = 0;
 
   for (const entry of functions) {
@@ -374,7 +444,11 @@ const main = (): number => {
       continue;
     }
 
-    const { text, used } = normaliseSource(entry, source);
+    const { text, used, bound, unbound } = normaliseSource(entry, source);
+    if (unbound.length > 0) {
+      untyped.push([entry, unbound]);
+      continue;
+    }
     Deno.writeTextFileSync(`${OUT_DIR}/${entry.symbol}.c`, text);
     written++;
 
@@ -383,8 +457,10 @@ const main = (): number => {
       declarations.push([entry, applyConventions(signature).text.replace(/\{\s*$/, "").trim()]);
     }
     const fileName = source.split("/").pop();
+    const notes = [used, bound > 0 ? `${bound} image address(es)` : null].filter(Boolean);
     console.log(
-      `  ${entry.symbol.padEnd(16)} <- ${fileName}` + (used ? `  [${used}]` : ""),
+      `  ${entry.symbol.padEnd(16)} <- ${fileName}` +
+        (notes.length > 0 ? `  [${notes.join(", ")}]` : ""),
     );
   }
 
@@ -402,6 +478,23 @@ const main = (): number => {
       const reason = (entry.reason ?? "").split(/\s+/).join(" ");
       console.log(`  ${entry.address} ${entry.symbol}: ${reason}`);
     }
+  }
+
+  if (untyped.length > 0) {
+    console.log(
+      `\n${untyped.length} entr${
+        untyped.length === 1 ? "y" : "ies"
+      } read a global whose type Ghidra did not commit to:`,
+    );
+    for (const [entry, names] of untyped) {
+      console.log(`  ${entry.address} ${entry.symbol}: ${names.join(", ")}`);
+    }
+    console.log(
+      "Give those addresses a type in Ghidra and re-export; the importer will not\n" +
+        "guess their width. Only the address-of form (&LAB_..., &PTR_...) is bound\n" +
+        "automatically, because there the address alone is the whole value.",
+    );
+    return 1;
   }
 
   if (missing.length > 0) {

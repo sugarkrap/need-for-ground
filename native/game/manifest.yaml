@@ -63,11 +63,38 @@ functions:
     kind: game
     note: __fastcall - initialises a timer struct from timeGetTime
 
-# Tried, and deliberately excluded. Each fails for a different reason, and the
-# three together are a fair summary of what "the decompiler output is not
+  # The TEB case: an inline-SEH function, which is what most of the C++ in this
+  # binary looks like. It saves fs:[0], links a record of its own - handler
+  # 0x770fc8 - runs, restores it, and returns. Without a real TEB it reads and
+  # writes through whatever %fs happens to hold; with one, both the original and
+  # the ported copy walk the same chain. It also makes a __thiscall virtual call,
+  # which the test supplies, so the SEH record can be inspected from *inside* the
+  # original's frame rather than inferred after the fact.
+  - address: 0x40a1f0
+    symbol: FUN_0040a1f0
+    kind: game
+    note: __fastcall destructor with a __try - saves, links and restores fs:[0]
+
+# Tried, and deliberately excluded. Each fails for a different reason, and
+# together they are a fair summary of what "the decompiler output is not
 # compilable C" means in practice. The importer prints these so they stay
 # visible rather than becoming folklore.
 excluded:
+  - address: 0x75d950
+    symbol: __SEH_prolog
+    reason: >-
+      Not a function, and this one cost a debugging session. Ghidra decompiles it
+      as `ExceptionList = auStack_c; return;`, which reads like the ideal TEB
+      test case. The machine code is MSVC's __SEH_prolog: it pushes an
+      EXCEPTION_REGISTRATION record, links it into fs:[0], moves the caller's
+      return address to the top of the stack and `ret`s to it - so it returns
+      having permanently consumed 12 bytes of the caller's stack and overwritten
+      the caller's saved EBP slot with a new frame pointer. Its contract is "be
+      called from a function prologue, and be undone by __SEH_epilog", not "be
+      called from C". Calling it from the test smashed the caller's frame; the
+      damage surfaced two functions later as unresolvable addresses and a stack
+      canary abort at exit. There is nothing to port: the compiler emits this
+      role itself. FUN_0040a1f0 above is the honest version of the same test.
   - address: 0x75c800
     symbol: shortsort
     reason: >-

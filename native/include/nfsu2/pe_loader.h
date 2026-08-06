@@ -18,17 +18,15 @@
  * possible - a ported function can call one that is not ported yet, and vice
  * versa.
  *
- * What it deliberately does not do yet, because neither is needed to call a
- * function and each would be guesswork until something requires it:
+ * What it deliberately does not do: relocations. This exe has a fixed base and no
+ * .reloc, so mapping anywhere other than 0x400000 would break absolute
+ * addresses, and the loader fails rather than relocating.
  *
- *   - relocations. This exe has a fixed base and no .reloc, so mapping anywhere
- *     other than 0x400000 would break absolute addresses. The loader fails
- *     rather than relocating.
- *   - the TEB and %fs. MSVC code reads fs:[0] for SEH and fs:[0x2c] for TLS. On
- *     i386 Linux %fs already belongs to glibc's TLS, so any function with a
- *     __try block or a __declspec(thread) access reads glibc's data and
- *     misbehaves. Wine solves this with a custom LDT entry via modify_ldt();
- *     that is the next piece of work when a function needs it.
+ * The other half of "call anything in the binary" is the TEB: MSVC code reads
+ * fs:[0] for SEH and fs:[0x2c] for TLS on every function with a __try. That lives
+ * in teb.h and is a separate call - mapping the image and giving the calling
+ * thread a %fs are independent, and a thread that only runs leaf functions needs
+ * only the former.
  *
  * Nothing here embeds game data: the caller supplies the path to their own
  * legally-owned exe at runtime.

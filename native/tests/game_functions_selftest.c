@@ -22,6 +22,7 @@
  */
 #include <nfsu2/ghidra_types.h>
 #include <nfsu2/pe_loader.h>
+#include <nfsu2/teb.h>
 
 #include "game_functions.h"
 #include "game_originals.h"
@@ -283,6 +284,192 @@ static void test_hybrid_execution(const struct nfsu2_pe_image *image)
     }
 }
 
+/* --- the TEB: %fs for original code --------------------------------------- */
+
+/* Read through %fs the way the original code does, to check the segment itself
+ * rather than the memory it happens to point at. */
+static unsigned int read_fs(unsigned int offset)
+{
+    unsigned int value;
+
+    __asm__ volatile("movl %%fs:(%1), %0" : "=r"(value) : "r"(offset));
+    return value;
+}
+
+static void write_fs(unsigned int offset, unsigned int value)
+{
+    __asm__ volatile("movl %0, %%fs:(%1)" :: "r"(value), "r"(offset));
+}
+
+/*
+ * What the original's virtual call lands in, so the SEH record can be read while
+ * it is still linked. See test_teb below for why there are two of these.
+ *
+ * __stdcall for the original: MSVC's __thiscall passes `this` in ECX and leaves
+ * the callee to pop the stack argument, which is what `push 1; call [eax]`
+ * followed by no cleanup means. GCC has no __thiscall, but __stdcall gets the
+ * stack discipline right and the ignored ECX costs nothing here.
+ */
+static int g_child_calls;
+static unsigned int g_chain_inside;
+static unsigned int g_handler_inside;
+
+static void record_chain(void)
+{
+    unsigned int chain = read_fs(NFSU2_TEB_EXCEPTION_LIST);
+
+    g_child_calls++;
+    g_chain_inside = chain;
+    /* EXCEPTION_REGISTRATION is { prev, handler }, on the caller's stack. */
+    g_handler_inside = (chain != 0 && chain != 0xffffffffu)
+        ? ((unsigned int *)(uintptr_t)chain)[1] : 0;
+}
+
+static void __attribute__((stdcall)) original_child_destructor(int flag)
+{
+    (void)flag;
+    record_chain();
+}
+
+/* And __cdecl for the ported copy, which calls through Ghidra's `code *`. */
+static void ported_child_destructor(int flag)
+{
+    (void)flag;
+    record_chain();
+}
+
+static void test_teb(const struct nfsu2_pe_image *image)
+{
+    char error[256] = "";
+    unsigned char *teb;
+    unsigned int saved_chain;
+
+    printf("\n# TEB through %%fs\n");
+
+    CHECK(nfsu2_teb_install(error, sizeof(error)) == 0, "installed a TEB (%s)",
+          error[0] ? error : "no error");
+    teb = nfsu2_teb_current();
+    CHECK(teb != NULL, "the thread has a TEB at %p, selector 0x%04x", (void *)teb,
+          nfsu2_teb_selector());
+    if (!teb)
+        return;
+
+    /* The segment must actually reach it: this is the part modify_ldt buys. */
+    CHECK(read_fs(NFSU2_TEB_SELF) == (unsigned int)(uintptr_t)teb,
+          "fs:[0x18] is the TEB's own address - the LDT entry is live");
+    CHECK(read_fs(NFSU2_TEB_EXCEPTION_LIST) == 0xffffffffu,
+          "fs:[0] is -1, an empty SEH chain, as Windows leaves it");
+    CHECK(read_fs(NFSU2_TEB_PEB) == *(unsigned int *)(teb + NFSU2_TEB_PEB) &&
+          read_fs(NFSU2_TEB_PEB) != 0,
+          "fs:[0x30] points at a PEB");
+    CHECK(read_fs(NFSU2_TEB_TLS_POINTER) != 0, "fs:[0x2c] points at a TLS array");
+
+    /* Writing through the segment must land in the TEB, since that is what a
+     * __try prologue does on every entry. */
+    write_fs(NFSU2_TEB_LAST_ERROR, 0xd15ea5e);
+    CHECK(*(unsigned int *)(teb + NFSU2_TEB_LAST_ERROR) == 0xd15ea5e,
+          "a write through fs: lands in the TEB");
+
+    /*
+     * And glibc must be unharmed. This is the reason the whole approach works on
+     * i386: libc keeps its thread pointer in %gs there, so %fs was free. If that
+     * were wrong, malloc and errno would be reading our TEB as their thread
+     * descriptor and the process would be unpredictable rather than broken.
+     */
+    {
+        char *scratch = malloc(64);
+
+        CHECK(scratch != NULL, "malloc still works after loading %%fs");
+        if (scratch) {
+            snprintf(scratch, 64, "glibc is fine");
+            CHECK(strcmp(scratch, "glibc is fine") == 0, "and so does snprintf");
+            free(scratch);
+        }
+        errno = EDOM;
+        CHECK(errno == EDOM, "and errno, which is thread-local through %%gs");
+    }
+
+    /*
+     * Now the point of all of it: original machine code with a __try.
+     *
+     * FUN_0040a1f0 is a destructor MSVC compiled with an inline SEH prologue -
+     * the shape most of the C++ in this binary has:
+     *
+     *   push -1 / push 0x770fc8 / push fs:[0] / mov fs:[0], esp
+     *   ... body ...
+     *   mov fs:[0], ecx        <- the saved chain, restored before returning
+     *
+     * So it reads and writes our TEB, and leaves nothing behind to inspect
+     * afterwards. That is what the child object below is for: the body makes a
+     * __thiscall virtual call when the child pointer is set, and the call lands
+     * in a thunk of ours *while* the record is linked. The thunk can then read
+     * fs:[0] and see the original's own SEH record - handler included.
+     */
+    {
+        nfsu2_original_FUN_0040a1f0 original = NFSU2_ORIGINAL(FUN_0040a1f0, image);
+        undefined4 object[3];
+        undefined4 child;
+        undefined4 child_vtable[1];
+
+        CHECK(original != NULL, "resolved the original with an inline __try");
+        if (original) {
+            write_fs(NFSU2_TEB_EXCEPTION_LIST, 0xffffffffu);
+            saved_chain = read_fs(NFSU2_TEB_EXCEPTION_LIST);
+
+            /* The layout the function expects: [0] a vtable it overwrites twice,
+             * [2] a child whose first vtable slot it calls. */
+            child_vtable[0] = (undefined4)(uintptr_t)original_child_destructor;
+            child = (undefined4)(uintptr_t)child_vtable;
+            memset(object, 0, sizeof(object));
+            object[2] = (undefined4)(uintptr_t)&child;
+
+            g_child_calls = 0;
+            original(object);
+
+            CHECK(g_child_calls == 1,
+                  "the ORIGINAL FUN_0040a1f0 called our thunk through its vtable");
+            CHECK(g_chain_inside != 0 && g_chain_inside != 0xffffffffu,
+                  "inside it, fs:[0] was 0x%08x - a live SEH record in our TEB",
+                  g_chain_inside);
+            CHECK(g_handler_inside == 0x770fc8,
+                  "and the record's handler is 0x%08x, the address MSVC pushed (0x770fc8)",
+                  g_handler_inside);
+            CHECK(read_fs(NFSU2_TEB_EXCEPTION_LIST) == saved_chain,
+                  "it restored the chain to 0x%08x on the way out", saved_chain);
+            CHECK(object[0] == 0x7843f0,
+                  "and left the second vtable in the object, as the decompilation says");
+
+            /*
+             * The ported copy reaches the same field, through ghidra_teb.h's
+             * ExceptionList macro rather than through %fs directly - and its
+             * thunk is __cdecl, because Ghidra's `(*(code *)...)(1)` has lost the
+             * __thiscall convention the original call site used. That difference
+             * is the interesting one for the port as a whole: vtable calls in
+             * decompiled code will need the convention put back by hand.
+             *
+             * Only the linking is compared, not the record's contents: GCC lays
+             * out its own frame, so the handler need not sit next to the saved
+             * chain the way MSVC's push sequence guarantees.
+             */
+            child_vtable[0] = (undefined4)(uintptr_t)ported_child_destructor;
+            memset(object, 0, sizeof(object));
+            object[2] = (undefined4)(uintptr_t)&child;
+
+            g_child_calls = 0;
+            g_chain_inside = 0;
+            FUN_0040a1f0(object);
+
+            CHECK(g_child_calls == 1 && g_chain_inside != 0 &&
+                  g_chain_inside != 0xffffffffu,
+                  "the PORTED copy linked its own record too (fs:[0] was 0x%08x inside)",
+                  g_chain_inside);
+            CHECK(read_fs(NFSU2_TEB_EXCEPTION_LIST) == saved_chain &&
+                  object[0] == 0x7843f0,
+                  "restored the chain and wrote the same vtable");
+        }
+    }
+}
+
 /* --- 2. against the original machine code -------------------------------- */
 
 static void test_against_original(const struct nfsu2_pe_image *image)
@@ -296,8 +483,8 @@ static void test_against_original(const struct nfsu2_pe_image *image)
     printf("\n# ported code vs the ORIGINAL machine code, same inputs\n");
 
     CHECK(original_ncpy && original_rchr && original_copy && original_dist && original_dotp,
-          "all %d manifest addresses resolved inside the mapped image",
-          NFSU2_ORIGINAL_COUNT);
+          "the 5 addresses compared here resolved inside the mapped image "
+          "(%d in the manifest)", NFSU2_ORIGINAL_COUNT);
     if (!original_ncpy || !original_dist)
         return;
 
@@ -456,6 +643,7 @@ int main(int argc, char **argv)
                image.entry_point);
         test_imports(&image);
         test_hybrid_execution(&image);
+        test_teb(&image);
         test_against_original(&image);
         printf("\n     %d differential comparisons against original code\n",
                g_differential_checks);

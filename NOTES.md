@@ -220,7 +220,9 @@ infrastructure:
 - **A minimal in-process PE mapper** (`native/src/loader/pe_loader.c`) maps the
   unwrapped exe's sections at its own ImageBase inside the native i386 ELF. For a
   self-contained function that is all it takes - no imports, no relocations (this
-  exe has no .reloc and cannot move), no TEB. `MAP_FIXED_NOREPLACE` rather than
+  exe has no .reloc and cannot move), no TEB. Imports and a TEB came later, and
+  both were needed sooner than expected: `__try` is everywhere in this binary, and
+  `%fs` is free on i386 only because glibc keeps its thread pointer in `%gs` there. `MAP_FIXED_NOREPLACE` rather than
   `MAP_FIXED`, so a base collision fails loudly instead of unmapping something
   else. Watch the COFF header offsets: `Machine` is at +0 of IMAGE_FILE_HEADER
   which is itself at pe_offset+4, and getting that base wrong reads

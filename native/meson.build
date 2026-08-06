@@ -180,7 +180,7 @@ endif
 # user's own decompiled/ output and is gitignored, so this target only exists
 # once that has been run. The PE loader is built regardless - it is ours.
 libnfsu2_loader = static_library('nfsu2_loader',
-  'src/loader/pe_loader.c',
+  ['src/loader/pe_loader.c', 'src/loader/teb.c'],
   include_directories : nfsu2_inc,
   c_args : ['-D_GNU_SOURCE'],
   install : false)
