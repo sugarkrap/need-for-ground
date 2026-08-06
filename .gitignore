@@ -26,6 +26,10 @@ out/
 output/
 dumps/
 decompiled/
+# ...and any staging copy of it. A re-decompile writes to a fresh directory so the
+# existing tree stays usable until it is complete, and `decompiled/` alone would
+# not have covered that - the derivative would have been committable.
+decompiled*/
 scratch/
 scratchpad/
 *.log

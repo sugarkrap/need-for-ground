@@ -31,8 +31,12 @@ def main():
     parser.add_argument("--program", required=True)
     parser.add_argument("--retype-global", action="append", default=[],
                          help="ADDRESS=InterfaceName, e.g. 0x870970=IDirect3D9 (repeatable)")
-    parser.add_argument("--d3d9-header", default="/usr/include/wine/windows/d3d9.h",
-                         help="header to read each method's argument count from; see "
+    # Repeatable, because the interfaces defined here come from two headers:
+    # d3d9.h and ddraw.h. Reading only the first left every IDirectDraw method
+    # parameterless - the exact defect this argument-count work exists to remove.
+    parser.add_argument("--header", action="append", dest="headers", default=[],
+                         help="header(s) to read each method's argument count from "
+                              "(default: Wine's d3d9.h and ddraw.h); see "
                               "derive_vtable_args.py for why that count matters")
     args = parser.parse_args()
 
@@ -55,10 +59,15 @@ def main():
     cat = CategoryPath("/DirectX")
     ptr_size = 4
 
-    with open(args.d3d9_header, encoding="utf-8", errors="replace") as handle:
-        argument_slots = {
-            name: dict(methods) for name, methods in parse_header_methods(handle.read()).items()
-        }
+    headers = args.headers or [
+        "/usr/include/wine/windows/d3d9.h",
+        "/usr/include/wine/windows/ddraw.h",
+    ]
+    argument_slots = {}
+    for header in headers:
+        with open(header, encoding="utf-8", errors="replace") as handle:
+            for name, methods in parse_header_methods(handle.read()).items():
+                argument_slots.setdefault(name, {}).update(dict(methods))
     missing_counts = []
 
     tx_id = program.startTransaction("Define DirectX vtable types")
@@ -114,7 +123,7 @@ def main():
             print(f"Retyped {hex(addr.getOffset())} as {iface_name}*")
 
         if missing_counts:
-            print(f"WARNING: no argument count in {args.d3d9_header} for "
+            print(f"WARNING: no argument count in {', '.join(headers)} for "
                   f"{len(missing_counts)} method(s); they keep the old "
                   f"parameterless definition, so stack arguments read after a call "
                   f"through them may be wrong:")
