@@ -10,6 +10,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#include <mmsystem.h>
+
 #include <nfsu2/win32_compat.h>
 #include <nfsu2/win32_shim.h>
 
@@ -226,6 +228,75 @@ static void test_gdi(void)
     CHECK(DeleteObject(font), "DeleteObject(font)");
 }
 
+/* --- file mapping and multimedia timers --------------------------------- */
+
+static volatile LONG g_timer_ticks;
+
+static void CALLBACK timer_tick(UINT id, UINT msg, DWORD_PTR user, DWORD_PTR r1, DWORD_PTR r2)
+{
+    (void)id; (void)msg; (void)r1; (void)r2;
+    /* The user value is checked, not just the count: timeSetEvent's callback is
+     * WINAPI while the timer thread is a pthread, so this crosses the same
+     * convention boundary as CreateThread's entry point. */
+    if (user == 0xfeed)
+        InterlockedIncrement(&g_timer_ticks);
+}
+
+static void test_mapping_and_timers(void)
+{
+    HANDLE file, mapping;
+    void *view;
+    DWORD written;
+    UINT timer;
+    LONG at_kill;
+
+    printf("\n# file mapping / mm timers\n");
+
+    /* Mapping is how the game streams its .BUN archives, so this is a real
+     * implementation over mmap rather than a stub. */
+    file = CreateFileA("MAPTEST.BIN", GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                       CREATE_ALWAYS, 0, NULL);
+    CHECK(file != INVALID_HANDLE_VALUE, "CreateFileA for the mapping fixture");
+    CHECK(WriteFile(file, "STREAMED-ARCHIVE-DATA", 21, &written, NULL) && written == 21,
+          "wrote the fixture payload");
+
+    mapping = CreateFileMappingA(file, NULL, PAGE_READWRITE, 0, 0, NULL);
+    CHECK(mapping != NULL, "CreateFileMappingA with a zero size takes it from the file");
+
+    view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+    CHECK(view != NULL, "MapViewOfFile");
+    CHECK(view && memcmp(view, "STREAMED-ARCHIVE-DATA", 21) == 0,
+          "the payload reads back through the view");
+    CHECK(view && UnmapViewOfFile(view), "UnmapViewOfFile");
+    CHECK(view && !UnmapViewOfFile(view) && GetLastError() == ERROR_INVALID_ADDRESS,
+          "unmapping twice is rejected rather than unmapping something else");
+
+    /* The mapping must outlive CloseHandle on the file, as on Windows. */
+    CloseHandle(file);
+    view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+    CHECK(view != NULL && memcmp(view, "STREAMED", 8) == 0,
+          "the mapping still works after the file handle is closed");
+    if (view)
+        UnmapViewOfFile(view);
+    CHECK(CloseHandle(mapping), "CloseHandle(mapping)");
+    DeleteFileA("MAPTEST.BIN");
+
+    timer = timeSetEvent(10, 1, timer_tick, 0xfeed, TIME_PERIODIC);
+    CHECK(timer != 0, "timeSetEvent(10ms, TIME_PERIODIC) returns a non-zero id");
+    Sleep(120);
+    CHECK(g_timer_ticks >= 8 && g_timer_ticks <= 14,
+          "the periodic callback fired %ld times in 120ms (expect ~11)",
+          (long)g_timer_ticks);
+    at_kill = g_timer_ticks;
+    CHECK(timeKillEvent(timer) == TIMERR_NOERROR, "timeKillEvent");
+    Sleep(80);
+    CHECK(g_timer_ticks <= at_kill + 1,
+          "no further callbacks after timeKillEvent (%ld -> %ld)",
+          (long)at_kill, (long)g_timer_ticks);
+    CHECK(timeKillEvent(timer) == MMSYSERR_INVALPARAM,
+          "killing an already-dead timer is rejected");
+}
+
 /* --- sockets ------------------------------------------------------------ */
 
 static void test_sockets(void)
@@ -405,6 +476,7 @@ int main(void)
     test_registry();
     test_locale();
     test_gdi();
+    test_mapping_and_timers();
     test_sockets();
 
     nfsu2_win32_shutdown();

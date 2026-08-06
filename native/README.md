@@ -115,15 +115,20 @@ Run `meson test -C native/build32` (and `build64`):
 - **d3d9-abi** - D3D9 vtable dispatch through Wine's macros in the cdecl world:
   arguments arrive intact, seven-argument calls marshal, and the caller's stack
   is still balanced after 100k calls.
-- **services** - 60 checks over the registry (including persistence across a
+- **services** - 92 checks over the registry (including persistence across a
   close/reopen), Winsock driven by a real TCP and a real UDP conversation over
   loopback plus a non-blocking connect, `select()`, FIONREAD/FIONBIO,
-  gethostbyname and the interface list; CP1252/UTF-8 conversion; and the gdi32
-  object model.
-- **dinput8** - 39 checks over device enumeration, the acquire/state contract,
+  gethostbyname and the interface list; CP1252/UTF-8 conversion; the gdi32
+  object model; mmap-backed file mapping (including that a mapping outlives its
+  file handle); and a multimedia timer's callback rate.
+- **dinput8** - 37 checks over device enumeration, the acquire/state contract,
   and both input paths: immediate `GetDeviceState` and the buffered
   `GetDeviceData` stream, fed by synthetic SDL events and checked against the
-  DIK scancodes the game will look for.
+  DIK scancodes the game will look for. The buffered assertions filter for the
+  keys the test pushed rather than counting events, because the buffer is fed
+  from the real SDL stream - a keypress from whoever is at the machine lands in
+  it too, and a test that fails when someone touches the keyboard is worse than
+  no test.
 - **abi-layout-match** - 47 struct sizes, field offsets and enum constants
   compared between Wine's headers and DXVK Native's own headers. All agree, at
   both 32- and 64-bit.

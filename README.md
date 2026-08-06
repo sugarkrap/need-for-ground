@@ -148,7 +148,7 @@ Working today - **all 250 imports the game needs** resolve (measured by
   rasterisation), shell32 (XDG directories), winmm timers
 - tapi32 and ddraw as deliberate honest failures - the imports must resolve, and
   `NFSU2_SHIM_TRACE=1` logs every stubbed call
-- six test suites (199 runtime checks plus 47 ABI comparisons) passing at -m32
+- six test suites (211 runtime checks plus 47 ABI comparisons) passing at -m32
   and -m64, plus two hosts: one SDL-driven, one that touches no SDL at all and
   runs the game's own RegisterClassExA -> CreateWindowExA -> PeekMessageA shape,
   presenting through DXVK to Vulkan as an i386 ELF at 2560x1080

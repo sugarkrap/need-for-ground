@@ -189,43 +189,80 @@ int main(void)
     push_key(SDL_SCANCODE_LSHIFT, SDL_KEYDOWN);
     pump();
 
+    /*
+     * Filtered to the keys this test pushed, rather than asserting an exact
+     * count. The buffer is fed from the real SDL event stream, so a keypress
+     * from whoever is at the machine (or a compositor-synthesised one) lands in
+     * it too - and a test that fails when someone touches the keyboard is worse
+     * than no test. What matters is that our three events arrive, in order,
+     * with the right DIK offsets and press/release data.
+     */
     event_count = 16;
     hr = IDirectInputDevice8_GetDeviceData(keyboard, sizeof(DIDEVICEOBJECTDATA), events,
                                            &event_count, 0);
-    CHECK(hr == DI_OK && event_count == 3, "GetDeviceData returned %lu buffered events",
+    CHECK(hr == DI_OK, "GetDeviceData succeeded (%lu event(s) buffered)",
           (unsigned long)event_count);
-    if (event_count >= 3) {
-        CHECK(events[0].dwOfs == DIK_W && events[0].dwData == 0x80,
-              "first event is DIK_W pressed (0x%02lx, data 0x%02lx)",
-              (unsigned long)events[0].dwOfs, (unsigned long)events[0].dwData);
-        CHECK(events[1].dwOfs == DIK_W && events[1].dwData == 0x00,
-              "second is DIK_W released");
-        CHECK(events[2].dwOfs == DIK_LSHIFT && events[2].dwData == 0x80,
-              "third is DIK_LSHIFT pressed");
-        CHECK(events[0].dwSequence < events[1].dwSequence &&
-                  events[1].dwSequence < events[2].dwSequence,
-              "sequence numbers increase");
+    {
+        DWORD expected_ofs[3] = { DIK_W, DIK_W, DIK_LSHIFT };
+        DWORD expected_data[3] = { 0x80, 0x00, 0x80 };
+        DWORD previous_sequence = 0;
+        int matched = 0;
+        int ordered = 1;
+        DWORD i;
+
+        for (i = 0; i < event_count && matched < 3; i++) {
+            if (events[i].dwOfs != expected_ofs[matched] ||
+                events[i].dwData != expected_data[matched])
+                continue; /* someone else's keystroke */
+            if (events[i].dwSequence <= previous_sequence)
+                ordered = 0;
+            previous_sequence = events[i].dwSequence;
+            matched++;
+        }
+        CHECK(matched == 3,
+              "the pushed sequence (DIK_W down, DIK_W up, DIK_LSHIFT down) arrived");
+        CHECK(ordered, "sequence numbers increase across those events");
     }
 
+    /* A non-peek read consumes: our keys must not still be there. */
     event_count = 16;
     IDirectInputDevice8_GetDeviceData(keyboard, sizeof(DIDEVICEOBJECTDATA), events,
                                       &event_count, 0);
-    CHECK(event_count == 0, "the buffer is drained after a non-peek read");
+    {
+        DWORD i;
+        int ours = 0;
 
-    /* DIK <-> scancode agreement, checked through the public surface: pressing
-     * a physical key must show up at the DIK offset the game will look at. */
+        for (i = 0; i < event_count; i++) {
+            if (events[i].dwOfs == DIK_W || events[i].dwOfs == DIK_LSHIFT)
+                ours++;
+        }
+        CHECK(ours == 0, "the buffer no longer holds the events we already read");
+    }
+
+    /* DIK <-> scancode agreement through the public surface: pressing a physical
+     * key must show up at the DIK offset the game will look at. */
     push_key(SDL_SCANCODE_ESCAPE, SDL_KEYDOWN);
-    pump();
-    event_count = 16;
-    IDirectInputDevice8_GetDeviceData(keyboard, sizeof(DIDEVICEOBJECTDATA), events,
-                                      &event_count, 0);
-    CHECK(event_count == 1 && events[0].dwOfs == DIK_ESCAPE,
-          "SDL escape maps to DIK_ESCAPE (0x%02x)", DIK_ESCAPE);
     push_key(SDL_SCANCODE_ESCAPE, SDL_KEYUP);
     pump();
     event_count = 16;
     IDirectInputDevice8_GetDeviceData(keyboard, sizeof(DIDEVICEOBJECTDATA), events,
                                       &event_count, 0);
+    {
+        DWORD i;
+        int down = 0, up = 0;
+
+        for (i = 0; i < event_count; i++) {
+            if (events[i].dwOfs != DIK_ESCAPE)
+                continue;
+            if (events[i].dwData == 0x80)
+                down++;
+            else
+                up++;
+        }
+        CHECK(down == 1 && up == 1,
+              "SDL escape maps to DIK_ESCAPE (0x%02x) for both press and release",
+              DIK_ESCAPE);
+    }
 
     /* --- mouse ---------------------------------------------------------- */
     hr = IDirectInput8_CreateDevice(dinput, &GUID_SysMouse, &mouse, NULL);
