@@ -69,7 +69,8 @@ src/loader/          minimal in-process PE mapper, for differential testing
 src/host/            smoke_d3d9.c (SDL-driven) and smoke_game_loop.c (game-shaped)
 game/manifest.txt    which functions to import from decompiled/ (code stays local)
 tests/               shim, services, user32, dinput8, D3D9 convention; ABI probes
-tools/               DXVK build script, coverage report, ABI diff
+tools/               DXVK build script (sh) + TypeScript tooling, run by Deno:
+                     import_decompiled, survey_decompiled, win32_coverage, abi_diff
 cross/linux32.txt    the real target: i386 ELF
 third_party/         DXVK checkout and built .so (not committed)
 ```
@@ -177,8 +178,8 @@ real input reaches a stdcall WNDPROC.
 ## Win32 coverage
 
 ```sh
-python3 native/tools/win32_coverage.py          # summary + grouped missing list
-python3 native/tools/win32_coverage.py --done
+deno task coverage                # summary + grouped missing list
+deno task coverage -- --done
 ```
 
 It cross-references `../analysis/win32_imports.txt` (what the unwrapped exe
@@ -326,14 +327,13 @@ remaining functions tractable rather than speculative.
 
 ### What the corpus actually looks like
 
-`native/tools/survey_decompiled.py` compiles decompiled functions in isolation
+`native/tools/survey_decompiled.ts` (`deno task survey`) compiles decompiled functions in isolation
 and buckets the failures, so the port's bottleneck is measured rather than
-assumed. On a 500-function sample (seed 1), with calls to undeclared callees and
-`DAT_` globals neutralised because those are artefacts of compiling one function
-alone:
+assumed. On a 500-function sample, with calls to undeclared callees and `DAT_` globals
+neutralised because those are artefacts of compiling one function alone:
 
 ```
-compiles as-is : 347/500 (69.4%)
+compiles as-is : 356/500 (71.2%)
   14.2%  undeclared identifier (another function or a global)
    3.0%  invalid unary '*' on an int (a pointer Ghidra typed as an integer)
    2.6%  field-slice syntax on a scalar (_X._6_2_)

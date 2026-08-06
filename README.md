@@ -160,8 +160,13 @@ and five functions are ported and verified two ways: against libc and a
 recomputation, and against the original machine code, which
 `native/src/loader/pe_loader.c` maps into the same process so both can be called
 with identical inputs. 282 differential comparisons, all identical.
-`native/tools/survey_decompiled.py` measures the rest: 69.4% of decompiled
-functions compile as-is with the `ghidra_types.h` harness.
+`deno task survey` measures the rest: ~70% of decompiled functions compile as-is
+with the `ghidra_types.h` harness.
+
+The port's own tooling is TypeScript run by Deno (`deno task import|survey|
+coverage`) - no build step and no node_modules. `analysis/` stays Python because
+it cannot be anything else: pyghidra is a bridge into Ghidra's own JVM, and
+`emulate_stub.py` is built on Unicorn and Capstone.
 
 ## Setup
 

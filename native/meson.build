@@ -288,11 +288,18 @@ if fs.is_dir(meson.current_source_dir() / dxvk_src / 'include/native/windows') \
       dxvk_src / 'include/native/directx',
       is_system : true),
     install : false)
-  test('abi-layout-match',
-    find_program('tools/abi_diff.py'),
-    args : [abi_wine.full_path(), abi_dxvk.full_path()],
-    depends : [abi_wine, abi_dxvk],
-    timeout : 60)
+  # The port's tooling is TypeScript run by Deno (see ../deno.json); --allow-run
+  # is the only permission it needs, to execute the two probe binaries.
+  deno = find_program('deno', required : false)
+  if deno.found()
+    test('abi-layout-match', deno,
+      args : ['run', '--allow-run', meson.current_source_dir() / 'tools/abi_diff.ts',
+              abi_wine.full_path(), abi_dxvk.full_path()],
+      depends : [abi_wine, abi_dxvk],
+      timeout : 60)
+  else
+    message('deno not found - skipping the header ABI comparison test.')
+  endif
 else
   message('DXVK sources not checked out - skipping the header ABI probe.')
 endif

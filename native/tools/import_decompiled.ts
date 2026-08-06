@@ -69,7 +69,7 @@ interface Manifest {
   excluded: Entry[];
 }
 
-function parseManifest(): Manifest {
+const parseManifest = (): Manifest => {
   let text: string;
   try {
     text = Deno.readTextFileSync(MANIFEST);
@@ -114,7 +114,7 @@ function parseManifest(): Manifest {
     functions: normalise("functions", document.functions),
     excluded: normalise("excluded", document.excluded),
   };
-}
+};
 
 /**
  * Locate the decompiled file for a manifest entry.
@@ -122,7 +122,7 @@ function parseManifest(): Manifest {
  * bulk_decompile.py names files <address>_<symbol>.c with the address padded to
  * eight hex digits, so the manifest's 0x43ce40 has to be normalised first.
  */
-function findSource(entry: Entry, decompiled: string): string | null {
+const findSource = (entry: Entry, decompiled: string): string | null => {
   const prefix = entry.addressValue.toString(16).padStart(8, "0") + "_";
   const candidates: string[] = [];
   for (const item of Deno.readDirSync(decompiled)) {
@@ -134,9 +134,11 @@ function findSource(entry: Entry, decompiled: string): string | null {
   candidates.sort();
   // One address can have several spellings if Ghidra renamed a function
   // (FID_conflict_* and friends); prefer an exact symbol match.
-  const exact = candidates.find((name) => name.slice(0, -2).slice(prefix.length) === entry.symbol);
+  const exact = candidates.find((name) =>
+    name.slice(0, -2).slice(prefix.length) === entry.symbol
+  );
   return `${decompiled}/${exact ?? candidates[0]}`;
-}
+};
 
 /**
  * Return the function's declaration, as one line.
@@ -153,7 +155,7 @@ function findSource(entry: Entry, decompiled: string): string | null {
  * the symbol name on its own continuation line, which looks exactly like the
  * start of a declaration.
  */
-function extractSignature(text: string): string | null {
+const extractSignature = (text: string): string | null => {
   const stripped = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
   const collected: string[] = [];
   let depth = 0;
@@ -167,9 +169,9 @@ function extractSignature(text: string): string | null {
     if (joined.includes("(") && depth === 0) return joined;
   }
   return null;
-}
+};
 
-function applyConventions(text: string): { text: string; used: string | null } {
+const applyConventions = (text: string): { text: string; used: string | null } => {
   let used: string | null = null;
   let result = text;
   for (const [ghidra, macro] of Object.entries(CONVENTIONS)) {
@@ -180,9 +182,12 @@ function applyConventions(text: string): { text: string; used: string | null } {
     }
   }
   return { text: result, used };
-}
+};
 
-function normaliseSource(entry: Entry, sourcePath: string): { text: string; used: string | null } {
+const normaliseSource = (
+  entry: Entry,
+  sourcePath: string,
+): { text: string; used: string | null } => {
   const original = Deno.readTextFileSync(sourcePath);
   const { text: body, used } = applyConventions(original);
   const fileName = sourcePath.split("/").pop() ?? sourcePath;
@@ -205,7 +210,7 @@ function normaliseSource(entry: Entry, sourcePath: string): { text: string; used
   ].join("\n");
 
   return { text: header + body, used };
-}
+};
 
 /**
  * Turn a declaration into a function-pointer typedef for the original.
@@ -217,13 +222,13 @@ function normaliseSource(entry: Entry, sourcePath: string): { text: string; used
  * place the declarator sits - so a parameter that happens to share the name
  * cannot be hit.
  */
-function functionPointerTypedef(signature: string, symbol: string): string | null {
+const functionPointerTypedef = (signature: string, symbol: string): string | null => {
   const pattern = new RegExp(`(?<![\\w])${symbol}\\s*\\(`);
   if (!pattern.test(signature)) return null;
   return `typedef ${signature.replace(pattern, `(*nfsu2_original_${symbol})(`)};`;
-}
+};
 
-function writeOriginalsHeader(declarations: Array<[Entry, string]>): number {
+const writeOriginalsHeader = (declarations: Array<[Entry, string]>): number => {
   const lines = [
     "/*",
     " * game_originals.h - how to call the ORIGINAL machine code.",
@@ -270,9 +275,9 @@ function writeOriginalsHeader(declarations: Array<[Entry, string]>): number {
   );
   Deno.writeTextFileSync(`${OUT_DIR}/game_originals.h`, lines.join("\n"));
   return count;
-}
+};
 
-function writeFunctionsHeader(declarations: Array<[Entry, string]>): void {
+const writeFunctionsHeader = (declarations: Array<[Entry, string]>): void => {
   const lines = [
     "/*",
     " * game_functions.h - declarations for the imported functions.",
@@ -292,9 +297,9 @@ function writeFunctionsHeader(declarations: Array<[Entry, string]>): void {
   }
   lines.push("#endif /* NFSU2_GAME_FUNCTIONS_H */", "");
   Deno.writeTextFileSync(`${OUT_DIR}/game_functions.h`, lines.join("\n"));
-}
+};
 
-function main(): number {
+const main = (): number => {
   const args = Deno.args;
   const wants = (flag: string) => args.includes(flag);
   const option = (flag: string, fallback: string) => {
@@ -315,7 +320,9 @@ function main(): number {
     for (const entry of excluded) {
       const reason = (entry.reason ?? "").split(/\s+/).join(" ").slice(0, 60);
       console.log(
-        `${entry.address.padStart(10)}  ${entry.symbol.padEnd(16)} ${"EXCL".padEnd(5)} ${reason}...`,
+        `${entry.address.padStart(10)}  ${entry.symbol.padEnd(16)} ${
+          "EXCL".padEnd(5)
+        } ${reason}...`,
       );
     }
     return 0;
@@ -375,7 +382,9 @@ function main(): number {
   console.log(`  ${originalCount} original-code typedef(s) in game_originals.h`);
 
   if (excluded.length > 0) {
-    console.log(`\n${excluded.length} entr${excluded.length === 1 ? "y" : "ies"} deliberately excluded:`);
+    console.log(
+      `\n${excluded.length} entr${excluded.length === 1 ? "y" : "ies"} deliberately excluded:`,
+    );
     for (const entry of excluded) {
       const reason = (entry.reason ?? "").split(/\s+/).join(" ");
       console.log(`  ${entry.address} ${entry.symbol}: ${reason}`);
@@ -389,6 +398,6 @@ function main(): number {
     return 1;
   }
   return 0;
-}
+};
 
 if (import.meta.main) Deno.exit(main());
