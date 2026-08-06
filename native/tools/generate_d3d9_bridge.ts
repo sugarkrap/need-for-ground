@@ -90,7 +90,8 @@ const callArguments = (slots: number): string =>
  * One thunk. The interesting lines are the translations either side of the call:
  * a wrapped pointer must not reach DXVK, and a raw pointer must not reach the game.
  */
-const thunk = (iface: string, method: Method, slot: number, known: Set<string>): string => {
+const thunk = (iface: string, method: Method, slot: number, known: Set<string>,
+               descSlot = -1): string => {
   const isFloat = /^(float|double)$/i.test(method.returns);
   const returns = isFloat ? "float" : "unsigned";
   const name = `t_${iface}_${method.name}`;
@@ -109,6 +110,17 @@ const thunk = (iface: string, method: Method, slot: number, known: Set<string>):
           ` /* ${p.interface} * */`,
       );
     }
+  }
+
+  /*
+   * Buffer locks get an audit call first - see audit_buffer_lock in d3d9_bridge.c.
+   * The GetDesc slot is passed as a literal because this generator knows it and the
+   * runtime would otherwise have to search for it by name.
+   */
+  if (/^IDirect3D(Vertex|Index)Buffer9$/.test(iface) && method.name === "Lock") {
+    const getDesc = descSlot;
+    if (getDesc >= 0)
+      lines.push(`    audit_buffer_lock(self, ${getDesc}, a1, a2);`);
   }
 
   lines.push(
@@ -202,7 +214,8 @@ const main = async (): Promise<number> => {
      * has to own the bridge's lifetime, and QueryInterface has to be told about. */
     for (let slot = 3; slot < methods.length; slot++) {
       const method = methods[slot];
-      out.push(thunk(iface, method, slot, known));
+      out.push(thunk(iface, method, slot, known,
+                     methods.findIndex((m) => m.name === "GetDesc")));
       out.push("");
       methodCount++;
       for (const p of method.params) {

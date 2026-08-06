@@ -145,7 +145,57 @@ static unsigned NFSU2_D3D9_THUNK nfsu2_d3d9_QueryInterface(struct nfsu2_d3d9_bri
 static unsigned NFSU2_D3D9_THUNK nfsu2_d3d9_AddRef(struct nfsu2_d3d9_bridge *self);
 static unsigned NFSU2_D3D9_THUNK nfsu2_d3d9_Release(struct nfsu2_d3d9_bridge *self);
 
+/* The generated file defines this below; the auditor above it needs the name. */
+static const char *iface_name(enum nfsu2_d3d9_iface iface);
+
+/*
+ * Is the game asking to lock more of a buffer than the buffer has?
+ *
+ * The hypothesis this tests: our heap canary proves nothing overruns a block *we*
+ * allocated, so the corruption may be of memory DXVK owns - and Lock is the one
+ * place DXVK hands the game a raw pointer to write through. If the game asks for a
+ * region larger than the buffer, whatever DXVK returns is smaller than what the game
+ * then fills.
+ *
+ * Read-only: it asks the real object for its descriptor and compares. Nothing is
+ * written into DXVK's memory, because that is the thing under suspicion.
+ *
+ * D3DVERTEXBUFFER_DESC and D3DINDEXBUFFER_DESC both start Format, Type, Usage, Pool,
+ * Size - so Size is the fifth dword either way.
+ */
+static void audit_buffer_lock(struct nfsu2_d3d9_bridge *self, unsigned int getdesc_slot,
+                              unsigned int offset, unsigned int size)
+{
+    unsigned int desc[8];
+    unsigned int result;
+    unsigned int capacity;
+
+    memset(desc, 0, sizeof(desc));
+    result = ((unsigned (*)(void *, unsigned))self->real_vtbl[getdesc_slot])
+        (self->real, (unsigned)(uintptr_t)desc);
+    if (result & 0x80000000u)
+        return; /* no descriptor, nothing to compare against */
+
+    capacity = desc[4];
+    /* SizeToLock 0 means "from the offset to the end", which cannot overrun. */
+    if (size == 0)
+        return;
+    if ((unsigned long long)offset + size > (unsigned long long)capacity) {
+        nfsu2_shim_trace("d3d9 LOCK PAST END: %s asked for offset %u + %u bytes of a "
+                         "%u-byte buffer - %llu byte(s) beyond it",
+                         iface_name(self->iface), offset, size, capacity,
+                         (unsigned long long)offset + size - capacity);
+    }
+}
+
 #include "bridge_generated.h"
+
+static const char *iface_name(enum nfsu2_d3d9_iface iface)
+{
+    if (iface <= NFSU2_D3D9_IFACE_NONE || iface >= NFSU2_D3D9_IFACE_COUNT)
+        return "?";
+    return g_iface_names[iface];
+}
 
 static unsigned NFSU2_D3D9_THUNK nfsu2_d3d9_AddRef(struct nfsu2_d3d9_bridge *self)
 {

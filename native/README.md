@@ -641,10 +641,37 @@ What remains:
   being the obvious candidate, since `Lock` hands the game a raw pointer and the
   canary cannot see allocations DXVK made with its own `new`
 
-The third is the most promising, and it is where to look next. It also fits the
-symptom: with tracing on, three consecutive runs now fault in *libc*, on a worker
-thread (`esp` in a thread stack, not the main one), writing to a high mmap address -
-which is what a corrupted allocator arena looks like when the next thread to allocate
+The third was tested and is **also not it**. Every `Lock` on a vertex or index buffer
+is now audited: the bridge asks the real object for its descriptor and compares
+`OffsetToLock + SizeToLock` against the buffer's actual size (read-only - nothing is
+written into the memory under suspicion). Across three runs the game never asks for a
+region larger than the buffer exists to hold.
+
+So two whole classes are eliminated by instrumentation rather than by argument:
+
+| ruled out                                          | by                     |
+| -------------------------------------------------- | ---------------------- |
+| a small write past a block *we* allocated           | the heap canary        |
+| a lock request larger than the buffer               | the buffer-lock audit  |
+
+What is left, in the order worth trying:
+
+1. **A write past a *locked region* rather than past the request.** The game may lock
+   a valid sub-range and then write beyond it - within the buffer is harmless, past
+   the buffer end corrupts DXVK's arena. The audit cannot see this; catching it needs
+   the returned pointer's distance to the buffer end recorded at `Lock` and checked
+   against what the game touched, which means a guard page rather than a canary.
+2. **`LockRect` and pitch.** A surface lock returns a pitch, and a game that computes
+   its own row stride instead of using the returned one writes past the last row.
+   This is a classic port failure and is not covered by anything above.
+3. **Our own shim writing past a game-supplied buffer.** Every `Get*` that fills a
+   caller's struct is a candidate if Wine's layout is larger than the one the game
+   was compiled against. The `abi-layout-match` suite compares Wine against *DXVK* -
+   it does not compare Wine against the 2004 SDK the game used.
+
+The symptom fits all three: with tracing on, three consecutive runs fault in *libc*,
+on a worker thread (`esp` in a thread stack, not the main one), writing to a high mmap
+address - what a corrupted allocator arena looks like when the next thread to allocate
 trips over it.
 
 #### One trap, and one correction

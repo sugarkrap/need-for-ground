@@ -2198,6 +2198,7 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DIndexBuffer9_Lock(struct nfsu2_d3d9_
 {
     unsigned result;
 
+    audit_buffer_lock(self, 13, a1, a2);
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[11])(self->real, a1, a2, a3, a4);
 
     if (result & 0x80000000u)
@@ -3082,6 +3083,7 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVertexBuffer9_Lock(struct nfsu2_d3d9
 {
     unsigned result;
 
+    audit_buffer_lock(self, 13, a1, a2);
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[11])(self->real, a1, a2, a3, a4);
 
     if (result & 0x80000000u)
