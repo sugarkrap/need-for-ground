@@ -61,8 +61,24 @@ silently producing a broken file.
 
 ### 3. (optional) Deeper analysis with Ghidra
 
+**Put the project somewhere durable, not in a scratchpad.** The analysis run below
+takes a while and everything downstream depends on its *typed* state - the DirectX
+vtable definitions especially - so losing it means redoing the whole chain. The
+first one for this repo was created under `/tmp` and did not survive a reboot,
+which cost a full re-import. `~/ghidra-projects/NFSU2` is a fine home; the
+decompiled output and the manifest can always be regenerated from it, but it
+cannot be regenerated from them.
+
+`pyghidra` is needed by the scripts below and ships with Ghidra rather than PyPI:
+
 ```
-/opt/ghidra/support/analyzeHeadless /path/to/project_dir ProjectName \
+python3 -m venv ~/ghidra-projects/venv
+~/ghidra-projects/venv/bin/pip install \
+  /opt/ghidra/Ghidra/Features/PyGhidra/pypkg/dist/pyghidra-*.whl
+```
+
+```
+/opt/ghidra/support/analyzeHeadless ~/ghidra-projects NFSU2 \
   -import /path/to/unwrapped/speed2.exe -overwrite
 
 python3 analysis/ghidra_query.py \
