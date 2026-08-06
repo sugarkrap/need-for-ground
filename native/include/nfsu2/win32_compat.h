@@ -62,6 +62,24 @@
 #endif
 
 /*
+ * Variadic Win32 exports (wsprintfA and anything else declared WINAPIV) need
+ * these. Wine's headers give us the __ms_va_list *type* but not the matching
+ * va_start/va_end, because those live in Wine's internal headers.
+ *
+ * It matters only at 64-bit, where WINAPIV resolves to ms_abi and
+ * __ms_va_list is __builtin_ms_va_list - a different type from the SysV
+ * va_list, so the standard va_start would not initialise it. At 32-bit both are
+ * the same thing and these collapse to the ordinary macros.
+ */
+#if defined(__x86_64__)
+#  define NFSU2_MS_VA_START(list, last) __builtin_ms_va_start(list, last)
+#  define NFSU2_MS_VA_END(list)         __builtin_ms_va_end(list)
+#else
+#  define NFSU2_MS_VA_START(list, last) va_start(list, last)
+#  define NFSU2_MS_VA_END(list)         va_end(list)
+#endif
+
+/*
  * Extra convention macros for porting decompiled code verbatim. Ghidra
  * annotates the original functions with __cdecl / __stdcall / __thiscall /
  * __fastcall; keeping those annotations on the ported C prototypes is what

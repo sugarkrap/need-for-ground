@@ -49,6 +49,9 @@ int nfsu2_win32_init(const char *game_root)
 
 void nfsu2_win32_shutdown(void)
 {
+    /* Settings the game wrote through RegSetValueExA are flushed here so they
+     * survive a clean exit; see advapi32/registry.c. */
+    nfsu2_registry_flush();
     nfsu2_path_reset();
 }
 

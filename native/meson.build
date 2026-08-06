@@ -32,10 +32,18 @@ if target_bits != 32
 endif
 
 # --- Win32 shim ---------------------------------------------------------
+# One static library for every DLL we implement that needs no SDL. Sources are
+# grouped into a directory per emulated DLL - tools/win32_coverage.py reports
+# coverage per directory, so the layout is also the bookkeeping.
 win32_sources = files(
+  'src/advapi32/registry.c',
+  'src/gdi32/gdi.c',
+  'src/tapi32/tapi.c',
+  'src/win32/comm.c',
   'src/win32/core.c',
   'src/win32/file.c',
   'src/win32/heap.c',
+  'src/win32/locale.c',
   'src/win32/memory.c',
   'src/win32/module.c',
   'src/win32/path.c',
@@ -43,6 +51,8 @@ win32_sources = files(
   'src/win32/sync.c',
   'src/win32/thread.c',
   'src/win32/time.c',
+  'src/ws2_32/posix_net.c',
+  'src/ws2_32/winsock.c',
 )
 
 thread_dep = dependency('threads')
@@ -92,6 +102,16 @@ shim_selftest = executable('nfsu2-shim-selftest',
   export_dynamic : true,
   install : false)
 test('shim', shim_selftest, timeout : 60)
+
+# --- services selftest --------------------------------------------------
+# Registry, Winsock (over real loopback traffic), locale/codepages, gdi32.
+services_selftest = executable('nfsu2-services-selftest',
+  'tests/services_selftest.c',
+  dependencies : [nfsu2_win32_dep],
+  c_args : ['-D_GNU_SOURCE'],
+  export_dynamic : true,
+  install : false)
+test('services', services_selftest, timeout : 120)
 
 # --- D3D9 calling-convention selftest -----------------------------------
 # Needs no DXVK and no GPU: guards d3d9_native.h against regressions.

@@ -58,4 +58,7 @@ int nfsu2_path_set_root(const char *root, char *out, size_t out_size);
 void nfsu2_path_reset(void);
 const char *nfsu2_path_root(void);
 
+/* Write the registry store back to disk if it changed (advapi32/registry.c). */
+void nfsu2_registry_flush(void);
+
 #endif /* NFSU2_SHIM_INTERNAL_H */

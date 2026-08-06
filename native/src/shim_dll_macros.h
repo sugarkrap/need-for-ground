@@ -20,5 +20,12 @@
 #define _USER32_
 #define _ADVAPI32_
 #define _WINMM_
+#define _GDI32_
+#define _WS2_32_
+
+/*
+ * tapi.h has no such switch - its prototypes are undecorated, so the line*
+ * definitions are exported by default and need nothing here.
+ */
 
 #endif /* NFSU2_SHIM_DLL_MACROS_H */
