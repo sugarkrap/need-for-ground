@@ -56,11 +56,17 @@ include/nfsu2/
   d3d9_native.h      wine's D3D9 types at DXVK Native's ABI  <- the keystone
   ghidra_types.h     undefined4/byte/uint/... so decompiled output compiles
   win32_shim.h       shim control surface (init, path translation, tracing)
-src/shim_dll_macros.h  per-DLL visibility macros; include before any wine header
-src/win32/           kernel32 &c: files, paths, heap, vmem, threads, sync, time
+src/win32/           kernel32: files, paths, heap, vmem, mapping, threads, sync,
+                     time, locale/codepages, volumes, toolhelp, SEH, resources
 src/user32/          windows, message queue, SDL->WM_* translation, input
+src/ws2_32/          Winsock over POSIX sockets (winsock.c + posix_net.c)
+src/dinput8/         DirectInput 8 over SDL: keyboard, mouse, joysticks
+src/advapi32/        registry, backed by registry.ini in the game root
+src/gdi32/           DC/bitmap/font object model; nothing rasterised
+src/shell32/         SHGetFolderPathA onto the XDG directories
+src/tapi32/ src/ddraw/ src/winmm/  telephony, DirectDrawCreate, mm timers
 src/host/            smoke_d3d9.c (SDL-driven) and smoke_game_loop.c (game-shaped)
-tests/               shim, user32, D3D9 convention selftests; header ABI probes
+tests/               shim, services, user32, dinput8, D3D9 convention; ABI probes
 tools/               DXVK build script, coverage report, ABI diff
 cross/linux32.txt    the real target: i386 ELF
 third_party/         DXVK checkout and built .so (not committed)
@@ -109,6 +115,15 @@ Run `meson test -C native/build32` (and `build64`):
 - **d3d9-abi** - D3D9 vtable dispatch through Wine's macros in the cdecl world:
   arguments arrive intact, seven-argument calls marshal, and the caller's stack
   is still balanced after 100k calls.
+- **services** - 60 checks over the registry (including persistence across a
+  close/reopen), Winsock driven by a real TCP and a real UDP conversation over
+  loopback plus a non-blocking connect, `select()`, FIONREAD/FIONBIO,
+  gethostbyname and the interface list; CP1252/UTF-8 conversion; and the gdi32
+  object model.
+- **dinput8** - 39 checks over device enumeration, the acquire/state contract,
+  and both input paths: immediate `GetDeviceState` and the buffered
+  `GetDeviceData` stream, fed by synthetic SDL events and checked against the
+  DIK scancodes the game will look for.
 - **abi-layout-match** - 47 struct sizes, field offsets and enum constants
   compared between Wine's headers and DXVK Native's own headers. All agree, at
   both 32- and 64-bit.
@@ -160,8 +175,28 @@ python3 native/tools/win32_coverage.py --done
 ```
 
 It cross-references `../analysis/win32_imports.txt` (what the unwrapped exe
-actually imports) against the entry points defined in `src/win32/`, so
-"how much Win32 is left" is measured rather than guessed.
+actually imports) against the entry points defined under `src/`, per module, so
+"how much Win32 is left" is measured rather than guessed. Currently **250/250
+(100%)**: 249 shimmed plus Direct3DCreate9 from DXVK.
+
+100% means every import resolves, not that every import is *implemented* -
+several are deliberate honest failures, and which is which is the useful
+distinction:
+
+| module | imports | what it is |
+| --- | --- | --- |
+| win32 (kernel32) | 159 | real |
+| user32 | 35 | real, SDL-backed |
+| ws2_32 | 22 | real, POSIX sockets |
+| gdi32 | 12 | real object model, nothing rasterised |
+| tapi32 | 9 | honest failure: no modem, and none wanted |
+| advapi32 | 6 | real, file-backed |
+| shell32 | 2 | real (XDG directories) |
+| winmm | 2 | real (thread-per-timer) |
+| dinput8 | 1 | real, SDL-backed |
+| ddraw | 1 | honest failure: D3D9 is the renderer |
+
+Run anything with `NFSU2_SHIM_TRACE=1` to see every stubbed call it makes.
 
 ## user32 design notes
 
@@ -191,23 +226,24 @@ actually imports) against the entry points defined in `src/win32/`, so
 
 ## Known gaps, in rough priority order
 
-1. **`dinput8`**: keyboard and mouse arrive as window messages, but the game
-   also opens DirectInput8 for the wheel/gamepad path. Nothing there yet.
-2. **CRT and locale**: the import list is full of MSVCRT support entry points
-   (`LCMapStringA`, `GetStringTypeA`, `MultiByteToWideChar`, ...). Ported code
-   compiled with gcc will use glibc for most of it, but any code path kept as
-   original machine code needs these.
-3. **Registry**: `RegOpenKeyExA`/`RegQueryValueExA` for settings. An INI file
-   under the game root is the obvious backing store.
-4. **SEH**: `SetUnhandledExceptionFilter` is a deliberate no-op; real
-   SIGSEGV -> `EXCEPTION_RECORD` translation is its own piece of work.
-5. **Audio** (`mss32.dll`, Miles Sound System) is not addressed at all.
-6. **`VirtualFree(MEM_RELEASE)`** leaks the mapping because reservation sizes
+1. **Audio.** `mss32.dll` (Miles Sound System) is not in the import list at all -
+   the game loads it dynamically - and nothing implements it. This is the largest
+   remaining hole in the platform layer.
+2. **SEH.** `RaiseException`/`RtlUnwind` abort with a diagnostic rather than
+   unwinding. Real support means translating SIGSEGV into an `EXCEPTION_RECORD`,
+   walking the handler chain off the TEB, and unwinding frames the compiler never
+   emitted unwind data for. Worth doing only once the port runs.
+3. **Force feedback.** `IDirectInputDevice8::CreateEffect` fails; SDL's haptic
+   API could back it later.
+4. **PE resources.** `FindResourceA` and friends fail: an ELF has no `.rsrc`.
+   The path if one is ever needed is an extraction tool (pefile is already a
+   dependency) plus a loader keyed on (type, name) - not built on speculation.
+5. **`VirtualFree(MEM_RELEASE)`** leaks the mapping because reservation sizes
    are not tracked. Harmless for a process that exits; wrong for anything that
    cycles large allocations.
-7. **gdi32** (12 imports): `CreateFontA`/`ExtTextOutA`/`BitBlt` - the 2004 debug
-   text overlay. Low value; a stub layer that swallows the calls is probably
-   enough.
+6. **Buffered DirectInput needs a message pump.** `GetDeviceData` is fed from
+   user32's SDL pump, so a frame that reads input without pumping sees no
+   buffered events. Immediate `GetDeviceState` works either way.
 
 ## How the game code gets in
 

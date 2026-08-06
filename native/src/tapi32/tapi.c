@@ -16,8 +16,6 @@
  * constants are large positive values (0x8000000x), so a signed return would
  * make a naive `result < 0` check behave differently here than on Windows.
  */
-#include "../shim_dll_macros.h"
-
 #include <nfsu2/win32_compat.h>
 #include <nfsu2/win32_shim.h>
 
@@ -112,4 +110,33 @@ DWORD WINAPI lineAnswer(HCALL call, LPCSTR user_info, DWORD size)
     (void)call; (void)user_info; (void)size;
     NFSU2_STUB("lineAnswer (no telephony device)");
     return LINEERR_NODEVICE;
+}
+
+/*
+ * tapi32.dll exports these *without* an A suffix - `lineGetDevCaps`, not
+ * `lineGetDevCapsA` - and that is what the game's import table names. Wine's
+ * tapi.h maps the plain name to the A one for source compatibility, so the
+ * suffixed definitions above do not produce the symbol the import needs. These
+ * aliases do.
+ */
+#undef lineGetDevCaps
+#undef lineGetID
+#undef lineMakeCall
+
+DWORD WINAPI lineGetDevCaps(HLINEAPP app, DWORD device, DWORD version, DWORD ext_version,
+                            LPLINEDEVCAPS caps)
+{
+    return lineGetDevCapsA(app, device, version, ext_version, caps);
+}
+
+DWORD WINAPI lineGetID(HLINE line, DWORD address, HCALL call, DWORD select,
+                       LPVARSTRING device_id, LPCSTR device_class)
+{
+    return lineGetIDA(line, address, call, select, device_id, device_class);
+}
+
+DWORD WINAPI lineMakeCall(HLINE line, LPHCALL call, LPCSTR dest_address, DWORD country_code,
+                          LPLINECALLPARAMS call_params)
+{
+    return lineMakeCallA(line, call, dest_address, country_code, call_params);
 }

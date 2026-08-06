@@ -166,12 +166,51 @@ reading of the headers: a stdcall/cdecl mismatch could not survive 300 frames of
 vtable dispatch. The 64-bit build does the same, and all four test suites pass at
 -m32 and -m64 with no warnings.
 
+### Three more ABI/linker traps found while completing the platform layer
+
+11. **Defining a Win32 function whose name libc also uses shadows libc's for the
+   whole program.** `ws2_32/winsock.c` defines `socket`, `bind`, `send`, `recv`
+   and ten more, because those *are* the Winsock names - so the linker resolved
+   the POSIX helper's own call to `socket()` to the Winsock one, and
+   nfsu2_net_socket() called itself until the stack ran out. It presents as an
+   immediate SIGSEGV on the first socket() call, and gdb crashed rather than
+   producing a backtrace. Fixed with cached `dlsym(RTLD_NEXT, ...)` lookups for
+   the fourteen colliding names.
+12. **The same collision has a second, worse form through the dynamic symbol
+   table.** Once those names were *exported* (which `--export-dynamic` plus
+   default visibility does), SDL and libX11's own `select()` calls resolved to
+   our Winsock `select`, which reads its fd_set as a count-plus-array structure
+   and walks off the end of a POSIX bitmask - SIGSEGV before `main()` printed
+   anything. Executable symbols take precedence over shared libraries in the
+   global scope, so the fix is to keep the Winsock entry points at Wine's
+   hidden-by-default visibility (i.e. *not* define `_WS2_32_`). Direct calls
+   still link; only GetProcAddress("socket") is lost, and nothing wants it.
+13. **Wine's `DECLSPEC_IMPORT` visibility is contagious.** Finding 4 above (the
+   per-DLL `_KERNEL32_` macros) was necessary but not sufficient: ELF resolves a
+   symbol's visibility to the *most restrictive* of all its declarations and its
+   definition, so a single consumer TU that included Wine's headers without those
+   macros pulled the symbol out of `.dynsym` for the entire program. The macros
+   therefore have to be in `nfsu2/win32_compat.h`, which everything includes -
+   not just in the shim's own sources. Related: a shim library must be linked
+   with `link_whole`, because an archive member nothing references is dropped,
+   and `GetProcAddress` can legitimately ask for any entry point (the
+   `Interlocked*` out-of-line definitions are exactly that case, since the
+   header's inline versions satisfy every call site).
+
 The user32 shim closes the loop on that: `nfsu2-smoke-game-loop` registers a
 class, creates a window through our own `CreateWindowExA`, hands that HWND to
 `CreateDevice`, and runs a `PeekMessageA`/`DispatchMessageA` frame loop without
 touching SDL anywhere - the same sequence the game's own startup performs -
 presenting 200 frames at 2560x1080 with WM_CREATE, WM_ACTIVATEAPP and real
 keyboard input arriving at a stdcall WNDPROC.
+
+The platform layer now satisfies **all 250 imports** the unwrapped exe needs
+(`native/tools/win32_coverage.py`), across kernel32, user32, ws2_32, gdi32,
+advapi32, shell32, winmm, dinput8, tapi32 and ddraw. Most are real
+implementations; tapi32 and ddraw are deliberate honest failures, and
+`NFSU2_SHIM_TRACE=1` logs every stubbed call. Winsock in particular is
+implemented rather than stubbed, because the from-scratch multiplayer this
+project is heading towards will be built on those same calls.
 
 ## Widescreen/ultrawide FOV patch
 

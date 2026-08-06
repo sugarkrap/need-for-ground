@@ -92,6 +92,7 @@ void nfsu2_obj_release(struct nfsu2_object *obj)
     case NFSU2_OBJ_EVENT:
     case NFSU2_OBJ_MUTEX:  nfsu2_sync_destroy(obj);   break;
     case NFSU2_OBJ_THREAD: nfsu2_thread_destroy(obj); break;
+    case NFSU2_OBJ_MAPPING: nfsu2_mapping_destroy(obj); break;
     default:               free(obj);                 break;
     }
 }

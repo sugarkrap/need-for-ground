@@ -133,16 +133,25 @@ Vulkan renderer). No Wine process is involved at runtime and no winelib is
 used - see `native/README.md` for why that shape was chosen and
 `NOTES.md` for the calling-convention findings the whole thing rests on.
 
-Working today (~55% of the game's import list, measured):
+Working today - **all 250 imports the game needs** resolve (measured by
+`native/tools/win32_coverage.py`):
 
-- kernel32-side shim - paths with case-insensitive resolution, file I/O, heap,
-  virtual memory, threads, sync, TLS, timing - with a 35-check selftest
-- user32 shim on SDL2 - windows, the message queue, SDL-event to WM_*
-  translation, cursor/capture - with a 34-check selftest
-- a D3D9 calling-convention test and a Wine-vs-DXVK header layout probe
-- two hosts: one SDL-driven, one that touches no SDL at all and runs the game's
-  own RegisterClassExA -> CreateWindowExA -> PeekMessageA shape, presenting
-  through DXVK to Vulkan as an i386 ELF at 2560x1080
+- kernel32: case-insensitive path resolution, file I/O, mapping, heap, virtual
+  memory, threads, sync, TLS, timing, codepages/locale, volumes, toolhelp
+- user32 on SDL2: windows, the message queue, SDL-event to WM_* translation,
+  cursor and capture
+- ws2_32: real Winsock over POSIX sockets, including the interface enumeration
+  LAN discovery needs - implemented rather than stubbed because the eventual
+  from-scratch multiplayer will be built on it
+- dinput8 on SDL2: keyboard, mouse and joysticks, immediate and buffered
+- advapi32 (registry, in a readable registry.ini), gdi32 (real object model, no
+  rasterisation), shell32 (XDG directories), winmm timers
+- tapi32 and ddraw as deliberate honest failures - the imports must resolve, and
+  `NFSU2_SHIM_TRACE=1` logs every stubbed call
+- six test suites (199 runtime checks plus 47 ABI comparisons) passing at -m32
+  and -m64, plus two hosts: one SDL-driven, one that touches no SDL at all and
+  runs the game's own RegisterClassExA -> CreateWindowExA -> PeekMessageA shape,
+  presenting through DXVK to Vulkan as an i386 ELF at 2560x1080
 
 No game code is ported yet.
 

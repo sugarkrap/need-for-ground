@@ -16,8 +16,6 @@
 #ifndef NFSU2_USER32_INTERNAL_H
 #define NFSU2_USER32_INTERNAL_H
 
-#include "../shim_dll_macros.h"
-
 #include <nfsu2/win32_compat.h>
 #include <nfsu2/win32_shim.h>
 

@@ -35,6 +35,9 @@
 #error "unsupported architecture (i386 is the real target; x86_64 builds exist only to validate the toolchain)"
 #endif
 
+/* Must precede <windows.h>; see the header for the visibility rule it fixes. */
+#include <nfsu2/win32_dllmacros.h>
+
 #include <windows.h>
 
 /*

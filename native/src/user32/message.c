@@ -351,14 +351,25 @@ static void translate_event(const SDL_Event *ev)
     }
 }
 
+/*
+ * DirectInput's buffered mode needs the raw event stream, and this pump is what
+ * consumes it - so each event is offered to dinput8 on the way past. Declared
+ * weak so user32 links with or without the dinput8 module present; the pointer
+ * is NULL in a build that leaves dinput8 out.
+ */
+__attribute__((weak)) void nfsu2_dinput_notify_sdl_event(const void *event);
+
 void nfsu2_msg_pump_sdl(void)
 {
     SDL_Event ev;
 
     if (!SDL_WasInit(SDL_INIT_VIDEO))
         return;
-    while (SDL_PollEvent(&ev))
+    while (SDL_PollEvent(&ev)) {
+        if (nfsu2_dinput_notify_sdl_event)
+            nfsu2_dinput_notify_sdl_event(&ev);
         translate_event(&ev);
+    }
 }
 
 /* --- the Win32 entry points -------------------------------------------- */

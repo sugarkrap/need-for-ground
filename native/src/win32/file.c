@@ -75,6 +75,14 @@ void nfsu2_find_destroy(struct nfsu2_object *obj)
     free(find);
 }
 
+/* mapping.c needs the underlying descriptor to mmap; nothing else should. */
+int nfsu2_file_descriptor(HANDLE handle)
+{
+    struct nfsu2_file *f = nfsu2_obj_get(handle, NFSU2_OBJ_FILE);
+
+    return f ? f->fd : -1;
+}
+
 HANDLE WINAPI CreateFileA(LPCSTR name, DWORD access, DWORD share,
                           LPSECURITY_ATTRIBUTES sa, DWORD creation,
                           DWORD flags, HANDLE template_file)
@@ -132,6 +140,25 @@ HANDLE WINAPI CreateFileA(LPCSTR name, DWORD access, DWORD share,
     f->host_path = strdup(host);
     SetLastError(ERROR_SUCCESS);
     return (HANDLE)f;
+}
+
+HANDLE WINAPI CreateFileW(LPCWSTR name, DWORD access, DWORD share,
+                          LPSECURITY_ATTRIBUTES sa, DWORD creation,
+                          DWORD flags, HANDLE template_file)
+{
+    char narrow[PATH_MAX_FALLBACK];
+
+    if (!name) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return INVALID_HANDLE_VALUE;
+    }
+    /* Narrowed and handed to the A version: paths reach the filesystem as bytes
+     * either way, and the whole path-resolution layer works in bytes. */
+    if (!WideCharToMultiByte(CP_ACP, 0, name, -1, narrow, sizeof(narrow), NULL, NULL)) {
+        SetLastError(ERROR_INVALID_NAME);
+        return INVALID_HANDLE_VALUE;
+    }
+    return CreateFileA(narrow, access, share, sa, creation, flags, template_file);
 }
 
 BOOL WINAPI ReadFile(HANDLE h, LPVOID buf, DWORD count, LPDWORD read_out, LPOVERLAPPED ov)

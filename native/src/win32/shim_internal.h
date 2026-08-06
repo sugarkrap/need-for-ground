@@ -2,8 +2,6 @@
 #ifndef NFSU2_SHIM_INTERNAL_H
 #define NFSU2_SHIM_INTERNAL_H
 
-#include "../shim_dll_macros.h"
-
 #include <nfsu2/win32_compat.h>
 #include <nfsu2/win32_shim.h>
 
@@ -60,5 +58,9 @@ const char *nfsu2_path_root(void);
 
 /* Write the registry store back to disk if it changed (advapi32/registry.c). */
 void nfsu2_registry_flush(void);
+
+/* Underlying descriptor of a file HANDLE, for mmap (file.c -> mapping.c). */
+int nfsu2_file_descriptor(HANDLE handle);
+void nfsu2_mapping_destroy(struct nfsu2_object *obj);
 
 #endif /* NFSU2_SHIM_INTERNAL_H */

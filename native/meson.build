@@ -38,19 +38,27 @@ endif
 win32_sources = files(
   'src/advapi32/registry.c',
   'src/gdi32/gdi.c',
+  'src/shell32/shell.c',
   'src/tapi32/tapi.c',
   'src/win32/comm.c',
   'src/win32/core.c',
+  'src/win32/exception.c',
   'src/win32/file.c',
   'src/win32/heap.c',
+  'src/win32/interlocked.c',
   'src/win32/locale.c',
+  'src/win32/mapping.c',
   'src/win32/memory.c',
   'src/win32/module.c',
   'src/win32/path.c',
   'src/win32/process.c',
+  'src/win32/resource.c',
   'src/win32/sync.c',
   'src/win32/thread.c',
   'src/win32/time.c',
+  'src/win32/toolhelp.c',
+  'src/win32/volume.c',
+  'src/winmm/mmtimer.c',
   'src/ws2_32/posix_net.c',
   'src/ws2_32/winsock.c',
 )
@@ -65,8 +73,12 @@ libnfsu2_win32 = static_library('nfsu2_win32',
   c_args : ['-D_GNU_SOURCE'],
   install : false)
 
+# link_whole, not link_with: every entry point has to reach the final binary even
+# when nothing references it, because GetProcAddress can ask for any of them.
+# win32/interlocked.c is the clearest case - the header's inline versions satisfy
+# every call site, so the archive member would otherwise never be pulled in.
 nfsu2_win32_dep = declare_dependency(
-  link_with : libnfsu2_win32,
+  link_whole : libnfsu2_win32,
   include_directories : [nfsu2_inc, wine_inc],
   dependencies : [thread_dep, dl_dep])
 
@@ -89,8 +101,29 @@ if sdl2.found()
     install : false)
 
   nfsu2_user32_dep = declare_dependency(
-    link_with : libnfsu2_user32,
+    link_whole : libnfsu2_user32,
     dependencies : [nfsu2_win32_dep, sdl2])
+
+  # --- dinput8 + ddraw (SDL2-backed) ------------------------------------
+  # Separate from user32 because user32 must not depend on it: the message pump
+  # reaches dinput8 through a weak symbol, so a build without this library still
+  # links and simply has no buffered DirectInput.
+  libnfsu2_dinput8 = static_library('nfsu2_dinput8',
+    files(
+      'src/ddraw/ddraw.c',
+      'src/dinput8/data_formats.c',
+      'src/dinput8/device.c',
+      'src/dinput8/dik_map.c',
+      'src/dinput8/dinput8.c',
+    ),
+    include_directories : [nfsu2_inc, wine_inc],
+    dependencies : [sdl2],
+    c_args : ['-D_GNU_SOURCE'],
+    install : false)
+
+  nfsu2_dinput8_dep = declare_dependency(
+    link_whole : libnfsu2_dinput8,
+    dependencies : [nfsu2_user32_dep])
 endif
 
 # --- shim selftest ------------------------------------------------------
@@ -132,6 +165,14 @@ if sdl2.found()
     export_dynamic : true,
     install : false)
   test('user32', user32_selftest, timeout : 120)
+
+  dinput8_selftest = executable('nfsu2-dinput8-selftest',
+    'tests/dinput8_selftest.c',
+    dependencies : [nfsu2_dinput8_dep],
+    c_args : ['-D_GNU_SOURCE'],
+    export_dynamic : true,
+    install : false)
+  test('dinput8', dinput8_selftest, timeout : 120)
 endif
 
 # --- DXVK Native --------------------------------------------------------

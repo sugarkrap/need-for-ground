@@ -174,6 +174,26 @@ BOOL WINAPI SetEnvironmentVariableA(LPCSTR name, LPCSTR value)
     return setenv(name, value, 1) == 0;
 }
 
+VOID WINAPI GetStartupInfoA(LPSTARTUPINFOA info)
+{
+    if (!info)
+        return;
+    /* Zeroed with dwFlags clear: the CRT reads this at startup and treats an
+     * empty structure as "no inherited handles, no window overrides", which is
+     * exactly the situation. */
+    memset(info, 0, sizeof(*info));
+    info->cb = sizeof(*info);
+    info->lpTitle = (LPSTR)"nfsu2";
+    info->wShowWindow = SW_SHOWNORMAL;
+}
+
+UINT WINAPI SetHandleCount(UINT count)
+{
+    /* A 16-bit-era relic: it has been a no-op that returns its argument since
+     * Win32 arrived, and MSVCRT still calls it. */
+    return count;
+}
+
 /* --- system info ------------------------------------------------------- */
 
 VOID WINAPI GetSystemInfo(LPSYSTEM_INFO info)

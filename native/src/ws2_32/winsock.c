@@ -24,7 +24,8 @@
  * A SOCKET here is the file descriptor, so it is directly comparable and
  * INVALID_SOCKET (~0) can never collide with a real one.
  */
-#include "../shim_dll_macros.h"
+/* Before every Wine header, and before winsock2.h in particular. */
+#include <nfsu2/win32_dllmacros.h>
 
 /*
  * winsock2.h must come before windows.h (which win32_compat.h pulls in):

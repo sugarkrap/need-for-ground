@@ -176,6 +176,30 @@ int main(void)
     CHECK(counter == 1, "thread ran its body exactly once");
     CloseHandle(thread);
 
+    /* --- GetProcAddress ------------------------------------------------- */
+    /*
+     * This is the end-to-end check on the DECLSPEC_IMPORT visibility problem:
+     * Wine's headers mark imported prototypes hidden, so without the per-DLL
+     * macros in src/shim_dll_macros.h these lookups all return NULL even though
+     * the functions link fine. InterlockedExchange additionally needs an
+     * out-of-line definition (win32/interlocked.c) because the header's version
+     * is a static inline that produces no symbol at all.
+     */
+    {
+        HMODULE kernel32 = GetModuleHandleA("kernel32.dll");
+
+        CHECK(kernel32 != NULL, "GetModuleHandleA(\"kernel32.dll\")");
+        CHECK((void *)GetProcAddress(kernel32, "CreateFileA") == (void *)&CreateFileA,
+              "GetProcAddress finds CreateFileA at the same address as the direct call");
+        CHECK(GetProcAddress(kernel32, "InterlockedExchange") != NULL,
+              "GetProcAddress finds InterlockedExchange (out-of-line, not the header inline)");
+        CHECK(GetProcAddress(kernel32, "MultiByteToWideChar") != NULL,
+              "GetProcAddress finds MultiByteToWideChar");
+        CHECK(GetProcAddress(kernel32, "NoSuchFunctionExists") == NULL &&
+                  GetLastError() == ERROR_PROC_NOT_FOUND,
+              "an unknown name reports ERROR_PROC_NOT_FOUND");
+    }
+
     nfsu2_win32_shutdown();
     cleanup_fixture();
 

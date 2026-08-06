@@ -19,9 +19,10 @@ IMPORTS = REPO / "analysis/win32_imports.txt"
 # Every DLL we implement: src/win32 (kernel32 and friends), src/user32, ...
 SHIM_ROOT = REPO / "native/src"
 
-# A definition looks like:  RETTYPE WINAPI Name(args)  - possibly with the
-# return type split over the previous line, which we do not do in this tree.
-DEF_RE = re.compile(r"^[A-Za-z_][\w \t*]*\bWINAPI\s+(\w+)\s*\(", re.MULTILINE)
+# A definition looks like:  RETTYPE WINAPI Name(args) - or WINAPIV for the cdecl
+# variadic ones such as wsprintfA. The return type is never split across lines in
+# this tree, so a single-line pattern is enough.
+DEF_RE = re.compile(r"^[A-Za-z_][\w \t*]*\bWINAPIV?\s+(\w+)\s*\(", re.MULTILINE)
 
 # Imports that are satisfied without a shim of ours, and by what.
 PROVIDED_ELSEWHERE = {

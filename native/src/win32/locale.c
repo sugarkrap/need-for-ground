@@ -710,6 +710,17 @@ LPWSTR WINAPI GetEnvironmentStringsW(void)
     return wide;
 }
 
+/*
+ * kernel32 exports `GetEnvironmentStrings` under that name as well as the A/W
+ * pair, and that is the name in the game's import table. Wine's headers make the
+ * plain name a macro for the A version, so the alias has to be spelled out.
+ */
+#undef GetEnvironmentStrings
+LPSTR WINAPI GetEnvironmentStrings(void)
+{
+    return GetEnvironmentStringsA();
+}
+
 BOOL WINAPI FreeEnvironmentStringsA(LPSTR block)
 {
     free(block);
