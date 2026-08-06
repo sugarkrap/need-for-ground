@@ -268,11 +268,29 @@ renderer is broken" - is wrong:
   not SDL's backend (wayland and x11), not a size mismatch (DXVK's swapchain
   matches the request), and DXVK logs no warnings
 
-Environment: Wayland session, NVIDIA, DXVK Native 3.0.2, both -m32 and -m64. The
-suspicion is DXVK Native's backbuffer-to-swapchain blit here rather than anything
-in this repo. A frame counter is not evidence that anything is on screen, which is
-the lesson worth keeping: the readback path was added precisely so that claim can
-be checked.
+Also ruled out since: forcing DXVK's blit path by giving the backbuffer a
+different size from the window (DXVK can alias an exactly-matching image and skip
+the blit shader), and raising `D3DPRESENT_PARAMETERS.BackBufferCount`.
+
+What *does* change the symptom is the Vulkan swapchain image count:
+`DXVK_CONFIG="dxvk.numBackBuffers = 3"` turns a permanently black window into one
+that shows content in roughly **one frame in ten** - measured by ten screen
+captures a quarter-second apart, one of which held the clear colour and one of
+which was partially drawn. So the presented images are real and only some of them
+contain our rendering, which points at swapchain image handling in DXVK Native
+rather than at the blit, and squarely away from this repo.
+
+It is not a fix and is not enabled by default - a flashing window is worse than a
+black one - but `--present-workaround` on either host turns it on for diagnosis.
+
+Environment: Wayland session, NVIDIA 610.43.03, DXVK Native 3.0.2, both -m32 and
+-m64, vsync and immediate, SDL2's wayland and x11 backends.
+
+Two lessons worth keeping. A frame counter is not evidence that anything is on
+screen - the readback path exists so that claim can be checked. And "one capture
+showed the right colour" is not evidence that something is fixed: the first
+measurement of the numBackBuffers change looked like a fix and was actually a
+one-in-ten flicker, which only ten captures in a row revealed.
 
 ## Widescreen/ultrawide FOV patch
 

@@ -20,6 +20,8 @@
 #include <nfsu2/d3d9_native.h>
 #include <nfsu2/win32_shim.h>
 
+#include "frame_capture.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,6 +37,8 @@ static int g_activate_seen;
  * message handler would do it in the middle of a frame. */
 static int g_pending_width;
 static int g_pending_height;
+static int g_capture_requested;
+static int g_captures_written;
 
 static LRESULT WINAPI window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
@@ -48,6 +52,13 @@ static LRESULT WINAPI window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
                wparam == VK_ESCAPE ? " (escape -> quit)" : "");
         if (wparam == VK_ESCAPE)
             PostQuitMessage(0);
+        /*
+         * F12 writes the backbuffer to a PNG. On a system where the window shows
+         * black despite correct rendering (see NOTES.md), this is the only way to
+         * see what the GPU actually produced while poking at the window.
+         */
+        if (wparam == VK_F12)
+            g_capture_requested = 1;
         return 0;
     case WM_MOUSEMOVE:
         g_mouse_moves_seen++;
@@ -100,6 +111,7 @@ int main(int argc, char **argv)
     int width = 1280, height = 720, frames = 180;
     int i;
     int immediate = 0;
+    int present_workaround = 0;
     WNDCLASSEXA cls;
     HWND hwnd;
     IDirect3D9 *d3d;
@@ -117,12 +129,31 @@ int main(int argc, char **argv)
             frames = parse_int(argv[++i], frames);
         else if (!strcmp(argv[i], "--immediate"))
             immediate = 1;
+        else if (!strcmp(argv[i], "--present-workaround"))
+            present_workaround = 1;
         else {
             fprintf(stderr, "usage: %s [--width N] [--height N] [--frames N] "
                             "[--immediate]\n", argv[0]);
             return 2;
         }
     }
+
+    /*
+     * DXVK Native presents swapchain images that were never rendered into on this
+     * system: the window is black (or, with more images, flashes) while the
+     * backbuffer verifiably holds the right pixels - press F12 in the interactive
+     * host, or use --readback-png, to see it.
+     *
+     * `dxvk.numBackBuffers = 3` changes the symptom rather than fixing it: content
+     * then reaches the screen in roughly one frame in ten, i.e. it flashes. That is
+     * not a default worth shipping - a flashing window is worse than a black one -
+     * so it is behind --present-workaround for diagnosis. Raising
+     * D3DPRESENT_PARAMETERS.BackBufferCount does nothing; it is the Vulkan
+     * swapchain image count that matters, which is what points at DXVK rather than
+     * at anything here. NOTES.md records what has been ruled out.
+     */
+    if (present_workaround)
+        setenv("DXVK_CONFIG", "dxvk.numBackBuffers = 3", 0);
 
     nfsu2_win32_set_command_line(argc, argv);
     if (nfsu2_win32_init(NULL) != 0) {
@@ -186,6 +217,11 @@ int main(int argc, char **argv)
     pp.BackBufferWidth = (UINT)(client.right - client.left);
     pp.BackBufferHeight = (UINT)(client.bottom - client.top);
     pp.BackBufferFormat = D3DFMT_X8R8G8B8;
+    /*
+     * One, as a real game asks for. Raising this does NOT work around the black
+     * window - the D3D9 backbuffer count is not what is wrong; the Vulkan
+     * swapchain image count is. See the DXVK_CONFIG below.
+     */
     pp.BackBufferCount = 1;
     pp.SwapEffect = D3DSWAPEFFECT_DISCARD;
     pp.hDeviceWindow = hwnd; /* our HWND, straight into DXVK's WSI */
@@ -282,12 +318,21 @@ int main(int argc, char **argv)
                 break;
             g_frames_presented++;
 
+            if (g_capture_requested) {
+                char path[64];
+
+                g_capture_requested = 0;
+                snprintf(path, sizeof(path), "/tmp/nfsu2-frame-%d.png", ++g_captures_written);
+                printf("capture    : %s\n",
+                       nfsu2_capture_png(g_device, path) == 0 ? path : "failed");
+            }
+
             /* Liveness in the title bar, through our own SetWindowTextA. */
             if (now - last_report >= 1000) {
                 char title[128];
 
                 snprintf(title, sizeof(title),
-                         "nfsu2 native + DXVK - %ux%u - %d fps - %d frames - Esc to quit",
+                         "nfsu2 native + DXVK - %ux%u - %d fps - %d frames - F12 capture, Esc quit",
                          g_present.BackBufferWidth, g_present.BackBufferHeight,
                          g_frames_presented - frames_at_report, g_frames_presented);
                 SetWindowTextA(hwnd, title);

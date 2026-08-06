@@ -247,18 +247,23 @@ wrong. Established, in order of how much each rules out:
   black, in the same frame - so the backbuffer never made it into the swapchain
   image that was shown.
 
-Ruled out: present mode (`IMMEDIATE` and `FIFO` both), word size (32- and
-64-bit builds behave identically), SDL's video backend (`wayland` and `x11`),
-window size mismatch (DXVK reports a swapchain matching the request), and DXVK
-log warnings (there are none). This machine is a Wayland session with an NVIDIA
-GPU and DXVK Native 3.0.2.
+Ruled out: present mode (`IMMEDIATE` and `FIFO`), word size (32- and 64-bit
+behave identically), SDL's video backend (`wayland` and `x11`), a window/backbuffer
+size mismatch (which forces DXVK's blit path instead of letting it alias a
+matching image), raising `BackBufferCount`, and DXVK log warnings (there are
+none). This machine is a Wayland session, NVIDIA 610.43.03, DXVK Native 3.0.2.
 
-That points at DXVK Native's backbuffer-to-swapchain blit in this configuration
-rather than at anything here. It does not block the port - the renderer work is
-verified by readback - but it does need resolving before anything is playable.
-Next steps if picking this up: build DXVK with debug symbols and check whether
-`DxvkSwapchainBlitter` runs, and try a GLFW-WSI build to see whether the SDL2 WSI
-path is specifically involved.
+**The one thing that changes the symptom** is the Vulkan swapchain image count:
+`DXVK_CONFIG="dxvk.numBackBuffers = 3"`, or `--present-workaround` on either
+host, turns a permanently black window into one that shows content in about one
+frame in ten - measured over ten captures a quarter-second apart. So the
+presented images are real and only some contain our rendering. That points at
+swapchain image handling in DXVK Native, not at the blit, and not at this repo.
+
+It is deliberately not on by default: a flashing window is worse than a black
+one. Next steps if picking this up: build DXVK with debug symbols and watch which
+swapchain image index is acquired versus rendered into, and try the GLFW WSI
+backend to see whether the SDL2 path is specifically involved.
 
 One real bug in our own code was found along the way and fixed: the game-shaped
 host never reset the device on `WM_SIZE`, so Alt+Enter left a 1600x900 backbuffer

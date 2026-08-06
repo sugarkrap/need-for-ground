@@ -241,7 +241,7 @@ dxvk_d3d9 = cc.find_library('dxvk_d3d9',
 if dxvk_d3d9.found() and sdl2.found()
   # Drives SDL directly: proves the ELF + DXVK + Vulkan path in isolation.
   executable('nfsu2-smoke-d3d9',
-    'src/host/smoke_d3d9.c',
+    ['src/host/smoke_d3d9.c', 'src/host/frame_capture.c'],
     dependencies : [nfsu2_win32_dep, dxvk_d3d9, sdl2],
     c_args : ['-D_GNU_SOURCE'],
     build_rpath : dxvk_lib_dir,
@@ -251,7 +251,7 @@ if dxvk_d3d9.found() and sdl2.found()
   # Touches no SDL at all: window via our CreateWindowExA, HWND straight into
   # DXVK, PeekMessageA/DispatchMessageA loop - the shape the ported game has.
   executable('nfsu2-smoke-game-loop',
-    'src/host/smoke_game_loop.c',
+    ['src/host/smoke_game_loop.c', 'src/host/frame_capture.c'],
     dependencies : [nfsu2_user32_dep, dxvk_d3d9],
     c_args : ['-D_GNU_SOURCE'],
     build_rpath : dxvk_lib_dir,
