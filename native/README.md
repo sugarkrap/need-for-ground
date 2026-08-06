@@ -65,7 +65,9 @@ src/advapi32/        registry, backed by registry.ini in the game root
 src/gdi32/           DC/bitmap/font object model; nothing rasterised
 src/shell32/         SHGetFolderPathA onto the XDG directories
 src/tapi32/ src/ddraw/ src/winmm/  telephony, DirectDrawCreate, mm timers
+src/loader/          minimal in-process PE mapper, for differential testing
 src/host/            smoke_d3d9.c (SDL-driven) and smoke_game_loop.c (game-shaped)
+game/manifest.txt    which functions to import from decompiled/ (code stays local)
 tests/               shim, services, user32, dinput8, D3D9 convention; ABI probes
 tools/               DXVK build script, coverage report, ABI diff
 cross/linux32.txt    the real target: i386 ELF
@@ -250,18 +252,69 @@ Run anything with `NFSU2_SHIM_TRACE=1` to see every stubbed call it makes.
    user32's SDL pump, so a frame that reads input without pumping sees no
    buffered events. Immediate `GetDeviceState` works either way.
 
-## How the game code gets in
+## Running game code
 
-Not yet started, and deliberately so - the boundary layers had to be provable
-first. The intended path, in order:
+Started, and verified two ways. `native/tools/import_decompiled.py` turns your
+local `decompiled/` output into compilable translation units, driven by
+`game/manifest.txt`; the generated code is gitignored, because decompiled
+pseudocode is a derivative of the copyrighted binary exactly as `decompiled/`
+itself is. The manifest, the tooling and the tests are what live in the repo.
 
-1. Keep using the existing patch pipeline (`tools/unwrap.py` and friends) for a
-   working exe under wine; that stays the reference to diff behaviour against.
-2. Port bottom-up from `DIRECTX_SCOPE.md`'s 99-function renderer scope, since
-   that is where the D3D9 boundary is and where the two independent widescreen
-   fixes already live. `ghidra_types.h` exists so a freshly exported function
-   compiles with minimal edits, then gets its types narrowed.
-3. Everything not yet ported stays in the original binary. That means the
-   in-process PE loader + import thunking has to come before the port is
-   runnable end-to-end - which is why the shim is defined `WINAPI` (stdcall)
-   throughout instead of the more convenient cdecl.
+```sh
+python3 native/tools/import_decompiled.py
+meson setup native/build32 --cross-file native/cross/linux32.txt \
+      -Dnfsu2_exe=/path/to/unwrapped/speed2.exe
+meson test -C native/build32 game-functions
+```
+
+Verification is deliberately two-fold:
+
+1. **Against a reference** - the statically-linked CRT functions against libc,
+   the game's own maths against a recomputation. Catches a port that compiles
+   but computes the wrong thing.
+2. **Against the original machine code** - `src/loader/pe_loader.c` maps the
+   unwrapped exe's sections at its own ImageBase (0x400000) inside this process,
+   and the same inputs go through both the ported C and the original compiled
+   function. 282 comparisons currently, all identical, including
+   `FUN_0043ce40` being *bit*-identical (both compute in x87 80-bit, so anything
+   less than equality would mean the port changed the arithmetic) and
+   `FUN_0048b710` receiving its `__thiscall` argument in ECX correctly.
+
+That second one is the important one: it does not depend on anyone having
+guessed the intended behaviour correctly, which is what makes porting the
+remaining functions tractable rather than speculative.
+
+### What the corpus actually looks like
+
+`native/tools/survey_decompiled.py` compiles decompiled functions in isolation
+and buckets the failures, so the port's bottleneck is measured rather than
+assumed. On a 500-function sample (seed 1), with calls to undeclared callees and
+`DAT_` globals neutralised because those are artefacts of compiling one function
+alone:
+
+```
+compiles as-is : 347/500 (69.4%)
+  14.2%  undeclared identifier (another function or a global)
+   3.0%  invalid unary '*' on an int (a pointer Ghidra typed as an integer)
+   2.6%  field-slice syntax on a scalar (_X._6_2_)
+   1.8%  invalid use of a void expression
+   1.2%  type mismatch
+```
+
+Three functions were tried and excluded from the manifest, and they are a fair
+sample of the remaining 30%: `shortsort` reads an `in_EAX` Ghidra invented
+because it missed a parameter; `__ftol` takes its argument on the x87 register
+stack, which has no C spelling at all; `__isnan` uses Ghidra's field-slice
+syntax on a `double`. Each needs a different fix, and none of them is generic.
+
+### What comes next
+
+1. Widen the manifest. The renderer scope in `../DIRECTX_SCOPE.md` is the useful
+   direction, since that is where the D3D9 boundary and both widescreen fixes
+   already are.
+2. Teach the loader imports, so a ported function can call one that is not
+   ported yet - the shim already resolves names (`win32/module.c`), so this is
+   thunking the IAT, not new infrastructure.
+3. The TEB and `%fs`. Any function with a `__try` block or a `__declspec(thread)`
+   access reads glibc's TLS through `%fs` and misbehaves. Wine solves it with a
+   custom LDT entry via `modify_ldt()`; that is the next real piece of work.

@@ -175,6 +175,57 @@ if sdl2.found()
   test('dinput8', dinput8_selftest, timeout : 120)
 endif
 
+# --- ported game code ---------------------------------------------------
+# native/game/generated/ is produced by tools/import_decompiled.py from the
+# user's own decompiled/ output and is gitignored, so this target only exists
+# once that has been run. The PE loader is built regardless - it is ours.
+libnfsu2_loader = static_library('nfsu2_loader',
+  'src/loader/pe_loader.c',
+  include_directories : nfsu2_inc,
+  c_args : ['-D_GNU_SOURCE'],
+  install : false)
+
+# 32-bit only: ghidra_types.h refuses to compile at 64-bit rather than
+# miscompile ILP32 pseudocode, so the target must not even be attempted there.
+game_generated = 'game/generated'
+if target_bits == 32 and fs.is_file(meson.current_source_dir() / game_generated / 'game_functions.h')
+  game_sources = run_command('sh', '-c',
+    'ls ' + meson.current_source_dir() / game_generated + '/*.c 2>/dev/null || true',
+    check : false).stdout().strip().split('\n')
+
+  if game_sources.length() > 0 and game_sources[0] != ''
+    message('imported game functions: @0@'.format(game_sources.length()))
+    game_inc = include_directories(game_generated)
+
+    # Warnings are relaxed here and only here: this is decompiler output, not
+    # code we wrote, and reformatting it to satisfy -Wparentheses would mean
+    # diverging from the source that gets re-generated. Anything that is a real
+    # correctness question shows up as a differential-test failure instead.
+    libnfsu2_game = static_library('nfsu2_game',
+      game_sources,
+      include_directories : [nfsu2_inc, wine_inc, game_inc],
+      c_args : ['-D_GNU_SOURCE', '-Wno-parentheses', '-Wno-unused-variable',
+                '-Wno-unused-but-set-variable'],
+      install : false)
+
+    game_selftest = executable('nfsu2-game-functions-selftest',
+      'tests/game_functions_selftest.c',
+      link_with : [libnfsu2_game, libnfsu2_loader],
+      include_directories : [nfsu2_inc, wine_inc, game_inc],
+      c_args : ['-D_GNU_SOURCE'],
+      install : false)
+    # NFSU2_EXE in the environment enables the differential half; without it the
+    # test still verifies the ported code against references.
+    test('game-functions', game_selftest, timeout : 120,
+         env : {'NFSU2_EXE': get_option('nfsu2_exe')})
+  endif
+elif target_bits != 32
+  message('game functions are ILP32 - not built in a @0@-bit build.'.format(target_bits))
+else
+  message('native/game/generated not present - run tools/import_decompiled.py to')
+  message('  build and test ported game functions.')
+endif
+
 # --- DXVK Native --------------------------------------------------------
 # Built out of tree by tools/build_dxvk_native.sh, which drops the .so into
 # third_party/dxvk-native/lib<bits>/.

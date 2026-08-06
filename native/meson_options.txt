@@ -7,3 +7,8 @@ option('dxvk_lib_dir',
   type : 'string',
   value : '',
   description : 'Directory containing libdxvk_d3d9.so; defaults to third_party/dxvk-native/lib<bits>')
+
+option('nfsu2_exe',
+  type : 'string',
+  value : '',
+  description : 'Path to an unwrapped speed2.exe; enables differential testing of ported functions against the original machine code')

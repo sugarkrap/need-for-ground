@@ -212,6 +212,46 @@ implementations; tapi32 and ddraw are deliberate honest failures, and
 implemented rather than stubbed, because the from-scratch multiplayer this
 project is heading towards will be built on those same calls.
 
+### Running game code natively
+
+Two things make this verifiable rather than hopeful, and both are new
+infrastructure:
+
+- **A minimal in-process PE mapper** (`native/src/loader/pe_loader.c`) maps the
+  unwrapped exe's sections at its own ImageBase inside the native i386 ELF. For a
+  self-contained function that is all it takes - no imports, no relocations (this
+  exe has no .reloc and cannot move), no TEB. `MAP_FIXED_NOREPLACE` rather than
+  `MAP_FIXED`, so a base collision fails loudly instead of unmapping something
+  else. Watch the COFF header offsets: `Machine` is at +0 of IMAGE_FILE_HEADER
+  which is itself at pe_offset+4, and getting that base wrong reads
+  TimeDateStamp's low half and reports "not an i386 image".
+- **Differential testing.** The ported C and the original machine code are called
+  with identical inputs and compared. 282 comparisons over five functions, all
+  identical - including `FUN_0043ce40` bit-identically, which matters because both
+  sides compute in x87 80-bit precision, so equality is the only acceptable
+  result and a port that changed the arithmetic could not hide.
+
+Ghidra's pseudo-intrinsics needed real semantics in `ghidra_types.h`, measured by
+frequency across the corpus (ABS 27, SBORROW4 18, NAN 12, SQRT 9, CARRY4 3).
+`SBORROW4(a, b)` is the *signed overflow* flag of `a - b` despite the name, and
+`ROUND` is `rint` (current x87 rounding mode) rather than `nearbyint`. `code` has
+to be `typedef void code();` - an unprototyped *function* type - because Ghidra
+emits calls straight through `code *`; as `void` that does not compile.
+
+**69.4% of decompiled functions compile as-is** with that harness
+(`native/tools/survey_decompiled.py`, 500-function sample, undeclared callees and
+globals neutralised as artefacts of isolated compilation). Making `code` callable
+fixed the error in all 62 functions that hit it but moved only 0.6% into the
+compiling bucket, because most of them then failed on a second problem behind the
+first - which is the general shape of this work.
+
+The remaining ~30% each need a different fix, and the three functions tried and
+excluded from `native/game/manifest.txt` are representative: a signature Ghidra
+got wrong (an invented `in_EAX` parameter), a function taking its argument on the
+x87 register stack (MSVC's private convention for `__ftol`, with no C spelling),
+and Ghidra's field-slice syntax on a scalar (`_X._6_2_` for bytes 6..7 of a
+double).
+
 ## Widescreen/ultrawide FOV patch
 
 Goal: correct field-of-view for arbitrary aspect ratios, baked into the

@@ -89,11 +89,17 @@
  * makes a partially-ported binary (some functions ours, some still original
  * machine code) able to call across the boundary.
  */
+/*
+ * The reserved __xxx__ attribute spellings, not the bare `cdecl` / `stdcall`
+ * ones: Wine's minwindef.h defines `_stdcall` and `_fastcall` as macros, and a
+ * bare attribute name inside __attribute__(( )) is still subject to macro
+ * expansion, so the short forms break in exactly the file that needs them.
+ */
 #if defined(__i386__)
-#  define NFSU2_CDECL     __attribute__((cdecl))
-#  define NFSU2_STDCALL   __attribute__((stdcall))
-#  define NFSU2_THISCALL  __attribute__((thiscall))
-#  define NFSU2_FASTCALL  __attribute__((fastcall))
+#  define NFSU2_CDECL     __attribute__((__cdecl__))
+#  define NFSU2_STDCALL   __attribute__((__stdcall__))
+#  define NFSU2_THISCALL  __attribute__((__thiscall__))
+#  define NFSU2_FASTCALL  __attribute__((__fastcall__))
 #else
 #  define NFSU2_CDECL
 #  define NFSU2_STDCALL

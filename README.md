@@ -153,7 +153,15 @@ Working today - **all 250 imports the game needs** resolve (measured by
   runs the game's own RegisterClassExA -> CreateWindowExA -> PeekMessageA shape,
   presenting through DXVK to Vulkan as an i386 ELF at 2560x1080
 
-No game code is ported yet.
+**Game code runs.** `native/tools/import_decompiled.py` turns your local
+`decompiled/` output into compilable translation units (the generated code is
+gitignored - it is a derivative of the game binary, like `decompiled/` itself),
+and five functions are ported and verified two ways: against libc and a
+recomputation, and against the original machine code, which
+`native/src/loader/pe_loader.c` maps into the same process so both can be called
+with identical inputs. 282 differential comparisons, all identical.
+`native/tools/survey_decompiled.py` measures the rest: 69.4% of decompiled
+functions compile as-is with the `ghidra_types.h` harness.
 
 ## Setup
 

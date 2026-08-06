@@ -34,6 +34,12 @@ scratchpad/
 # native/tools/build_dxvk_native.sh, never vendored here)
 native/build*/
 native/third_party/
+
+# Ported game functions, generated from decompiled/ by
+# native/tools/import_decompiled.py. Same category as decompiled/ itself: a
+# derivative of the copyrighted binary. The manifest and the tooling are
+# committed; the code they produce is not.
+native/game/generated/
 b32/
 b64/
 
