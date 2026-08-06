@@ -132,6 +132,14 @@ Run `meson test -C native/build32` (and `build64`):
   from the real SDL stream - a keypress from whoever is at the machine lands in
   it too, and a test that fails when someone touches the keyboard is worse than
   no test.
+- **seh** - 24 checks over the exception dispatcher: the handler chain walked in
+  order until one accepts, the catch path (unwind the frames in between, then
+  transfer control - `setjmp`/`longjmp` standing in for the `jmp` a `__except`
+  block does), what `RaiseException` puts in the record, `RtlUnwind`'s bounds and
+  its `EXCEPTION_UNWINDING`/`EXCEPTION_EXIT_UNWIND` flags, and a real SIGSEGV
+  repaired by the handler and resumed. Two more run in forked children, because
+  refusing a corrupt chain has no non-fatal outcome: the parent checks *how* the
+  child died. 32-bit only.
 - **abi-layout-match** - 47 struct sizes, field offsets and enum constants
   compared between Wine's headers and DXVK Native's own headers. All agree, at
   both 32- and 64-bit.
@@ -288,10 +296,11 @@ capture and was actually a flicker - ten captures a quarter-second apart showed 
 1. **Audio.** `mss32.dll` (Miles Sound System) is not in the import list at all -
    the game loads it dynamically - and nothing implements it. This is the largest
    remaining hole in the platform layer.
-2. **SEH.** `RaiseException`/`RtlUnwind` abort with a diagnostic rather than
-   unwinding. Real support means translating SIGSEGV into an `EXCEPTION_RECORD`,
-   walking the handler chain off the TEB, and unwinding frames the compiler never
-   emitted unwind data for. Worth doing only once the port runs.
+2. **The game's CRT startup.** SEH itself works (see below), but the first thing
+   the game's own C++ frame handler does is take a CRT lock, and the CRT lock
+   table is only filled by the game's startup code. Until that runs, any original
+   code path that locks recurses to death. This is now the blocker in front of
+   hybrid execution, and it is not a Win32 gap at all.
 3. **Force feedback.** `IDirectInputDevice8::CreateEffect` fails; SDL's haptic
    API could back it later.
 4. **PE resources.** `FindResourceA` and friends fail: an ELF has no `.rsrc`.
@@ -435,7 +444,7 @@ what x86_64 habits suggest: on i386 Linux glibc keeps its thread pointer in **`%
 leaving `%fs` free - which is exactly why Windows uses `%fs` there. So
 `modify_ldt()` (the same mechanism Wine uses) points a private LDT entry at a TEB of
 our own, `%fs` is loaded with the resulting selector, and libc never notices.
-`native/src/loader/teb.c` is a few dozen lines because of that; on x86_64 the roles
+`native/src/win32/teb.c` is a few dozen lines because of that; on x86_64 the roles
 swap and the entry points fail cleanly instead.
 
 The test does not settle for "a field changed". It hands the original destructor at
@@ -479,6 +488,74 @@ refused instead, because its width is exactly what Ghidra did not commit to and
 guessing dword when it is a byte would corrupt a neighbour silently. `LAB_` names
 that are `goto` targets are left alone - Ghidra uses the prefix for both, and
 `_strncpy`'s loop is real C labels.
+
+### SEH: signals in, the game's handler chain out
+
+The game binary carries its own exception machinery. Every function with a `__try`
+or a C++ `try` links a record onto `fs:[0]`, and the handler in that record is code
+*inside the exe*: MSVC's `__except_handler3` and `__CxxFrameHandler` are statically
+linked, and each function with C++ EH gets a ten-byte thunk
+(`mov eax, <FuncInfo>; jmp __CxxFrameHandler`) whose address is what the prologue
+pushes - `0x770fc8` is one of them. None of that is ours to write.
+
+What is ours is the operating system's half, and that is what
+`src/win32/exception.c` now is:
+
+- **the dispatcher** - walk `fs:[0]` calling each `__cdecl` handler with
+  `(record, frame, context, dispatcher)` until one returns
+  `ExceptionContinueExecution`, honouring `NestedException` and refusing to
+  continue a non-continuable exception
+- **`RaiseException`** - which is how MSVC's `throw` (code `0xe06d7363`) and the
+  game's own error paths start one
+- **`RtlUnwind`** - the second pass, which pops the frames between the throw and
+  the catch with `EXCEPTION_UNWINDING` set so destructors run. It *returns
+  normally*, because on i386 the handler is what transfers control: it restores
+  esp/ebp from its own registration record and jumps to its `__except` block
+- **faults** - SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP become an `EXCEPTION_RECORD`
+  plus a `CONTEXT` built from `ucontext_t`, and `ExceptionContinueExecution`
+  writes the (possibly edited) context back so the kernel resumes from it
+- **the top-level filter** - `SetUnhandledExceptionFilter` is wired up, so a game
+  that installs a crash handler still gets called
+
+Two decisions worth stating. There is **no sigaltstack**: handlers run on the
+faulting thread's own stack, which is what Windows does and what makes it safe for
+a handler to abandon the signal frame by jumping to its `__except` block (with
+`SA_NODEFER` so that does not leave the signal blocked forever). The cost is that
+`EXCEPTION_STACK_OVERFLOW` cannot work - a fault on the guard page has no stack
+left to build a frame on. And an unhandled fault does **not** `abort()`: the
+default disposition goes back and the handler returns, so the faulting instruction
+re-executes and the process dies exactly where it went wrong, which is the core
+dump worth having.
+
+The dispatcher also refuses a chain that does not look like one - records must be
+4-byte aligned, inside the thread's stack, and link strictly outwards. `fs:[0]` is
+a stack address written by code we did not compile, and the alternative to a
+diagnostic is calling a function pointer read out of a random stack slot.
+
+#### What the end-to-end attempt found
+
+Raising an exception from inside a call made by the original `FUN_0040a1f0` - so
+that the innermost frame in the chain is the game's own C++ EH thunk - does reach
+MSVC's frame handler with a real record and real `FuncInfo`. Then it dies, in a
+two-frame recursion inside the game's CRT:
+
+```
+__InternalCxxFrameHandler        0x762e0a
+  -> _mtinitlocknum(10)          0x762d72   allocate lock 10
+       -> _lock(10)              0x762df1   ...which locks lock 10
+            -> _mtinitlocknum(10)           ...which is still NULL
+```
+
+MSVC's C++ EH takes a CRT lock before allocating its per-thread exception data,
+and `_lock(n)` bootstraps a missing lock by calling `_mtinitlocknum(n)`, which
+takes lock 10 (`_LOCKTAB_LOCK`) to do it. In a real process `_mtinit()` filled that
+entry during CRT startup, so the recursion terminates immediately. Nothing here has
+run the game's CRT startup, so `_locktable` at `0x81a340` is all zeroes.
+
+That is a useful result: the next dependency for running real game code is the
+game's *own CRT initialisation*, not anything in the Win32 layer. The
+reproduction is kept, off by default, as `NFSU2_SEH_CXX_PROBE=1` in the
+game-functions selftest.
 
 ### What comes next
 

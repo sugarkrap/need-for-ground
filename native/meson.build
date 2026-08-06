@@ -54,6 +54,10 @@ win32_sources = files(
   'src/win32/process.c',
   'src/win32/resource.c',
   'src/win32/sync.c',
+  # The TEB is Win32 runtime state, not loader plumbing: LastError and the SEH
+  # chain both live in it, so exception.c and core.c need it wherever the shim
+  # goes - including hosts that never map a PE.
+  'src/win32/teb.c',
   'src/win32/thread.c',
   'src/win32/time.c',
   'src/win32/toolhelp.c',
@@ -146,6 +150,18 @@ services_selftest = executable('nfsu2-services-selftest',
   install : false)
 test('services', services_selftest, timeout : 120)
 
+# --- SEH selftest -------------------------------------------------------
+# 32-bit only: the handler chain lives at fs:[0], which needs the i386 TEB
+# (src/win32/teb.c), and there is no portable version of any of it.
+if target_bits == 32
+  seh_selftest = executable('nfsu2-seh-selftest',
+    'tests/seh_selftest.c',
+    dependencies : [nfsu2_win32_dep],
+    c_args : ['-D_GNU_SOURCE'],
+    install : false)
+  test('seh', seh_selftest, timeout : 60)
+endif
+
 # --- D3D9 calling-convention selftest -----------------------------------
 # Needs no DXVK and no GPU: guards d3d9_native.h against regressions.
 d3d9_abi_selftest = executable('nfsu2-d3d9-abi-selftest',
@@ -180,7 +196,7 @@ endif
 # user's own decompiled/ output and is gitignored, so this target only exists
 # once that has been run. The PE loader is built regardless - it is ours.
 libnfsu2_loader = static_library('nfsu2_loader',
-  ['src/loader/pe_loader.c', 'src/loader/teb.c'],
+  'src/loader/pe_loader.c',
   include_directories : nfsu2_inc,
   c_args : ['-D_GNU_SOURCE'],
   install : false)

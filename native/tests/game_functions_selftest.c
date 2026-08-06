@@ -22,6 +22,7 @@
  */
 #include <nfsu2/ghidra_types.h>
 #include <nfsu2/pe_loader.h>
+#include <nfsu2/seh.h>
 #include <nfsu2/teb.h>
 
 #include "game_functions.h"
@@ -29,6 +30,10 @@
 
 #include <errno.h>
 #include <math.h>
+#include <setjmp.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -470,6 +475,152 @@ static void test_teb(const struct nfsu2_pe_image *image)
     }
 }
 
+/* --- SEH: our dispatcher calling the game's own handler -------------------- */
+
+/*
+ * The other half of the SEH work (the dispatcher's own contract is checked in
+ * seh_selftest.c): can an exception raised inside the game's code be walked
+ * through a handler that *belongs to the game*?
+ *
+ * FUN_0040a1f0's prologue links a record whose handler is 0x770fc8 - a ten-byte
+ * thunk that loads a FuncInfo into eax and jumps to __CxxFrameHandler, both
+ * statically linked into the exe. So the chain during the call is
+ *
+ *   fs:[0] -> [the original's record, handler = the exe's C++ EH thunk]
+ *          -> [a record of ours, outside it, which catches]
+ *          -> -1
+ *
+ * and raising an exception from inside the original's virtual call means our
+ * dispatcher has to call MSVC's own frame handler, on real FuncInfo, and act on
+ * what it returns.
+ *
+ * IT DOES NOT WORK YET, and the reason is worth more than the test would have
+ * been. Run with NFSU2_SEH_CXX_PROBE=1 and the child dies of a stack overflow
+ * inside the *game's* CRT, in a two-frame recursion:
+ *
+ *   __InternalCxxFrameHandler          0x762e0a
+ *     -> _mtinitlocknum(10)            0x762d72   allocate lock 10
+ *          -> _lock(10)                0x762df1   ...which locks lock 10
+ *               -> _mtinitlocknum(10)             ...which is still NULL
+ *
+ * MSVC's C++ EH takes a CRT lock before it allocates its per-thread exception
+ * data, and `_lock(n)` bootstraps a missing lock by calling `_mtinitlocknum(n)`,
+ * which takes lock 10 (_LOCKTAB_LOCK) to do it. In a real process that entry was
+ * filled by `_mtinit()` during CRT startup, so the recursion terminates on the
+ * first step. Nothing here has run the game's CRT startup, so `_locktable` at
+ * 0x81a340 is all zeroes and it never terminates.
+ *
+ * So the next dependency for hybrid execution is not SEH at all: it is the game's
+ * own CRT initialisation. Our dispatcher's part is done - it reached MSVC's frame
+ * handler with a real record and real FuncInfo - and the probe stays here, off by
+ * default, because it is the reproduction for that finding.
+ */
+static jmp_buf g_seh_catch;
+static DWORD g_caught_code;
+static int g_raised;
+
+static DWORD CDECL catch_outside(PEXCEPTION_RECORD record,
+                                 EXCEPTION_REGISTRATION_RECORD *frame,
+                                 PCONTEXT context,
+                                 EXCEPTION_REGISTRATION_RECORD **dispatcher)
+{
+    (void)context; (void)dispatcher;
+    g_caught_code = record->ExceptionCode;
+    /* What a __except block does: pop everything inside this frame, then jump. */
+    RtlUnwind(frame, NULL, record, NULL);
+    longjmp(g_seh_catch, 1);
+    return ExceptionContinueSearch; /* not reached */
+}
+
+/* Called by the original through its vtable, with its SEH record linked. */
+static void __attribute__((stdcall)) raise_from_inside(int flag)
+{
+    (void)flag;
+    g_raised = 1;
+    RaiseException(0x20000042u, 0, 0, NULL);
+}
+
+#define CHILD_OK              0
+#define CHILD_NOT_CAUGHT      2
+#define CHILD_WRONG_CODE      3
+#define CHILD_NEVER_RAISED    4
+
+static int seh_through_original_child(const struct nfsu2_pe_image *image)
+{
+    nfsu2_original_FUN_0040a1f0 original = NFSU2_ORIGINAL(FUN_0040a1f0, image);
+    EXCEPTION_REGISTRATION_RECORD outer;
+    undefined4 object[3];
+    undefined4 child;
+    undefined4 child_vtable[1];
+
+    if (!original)
+        return CHILD_NOT_CAUGHT;
+
+    /* Our frame goes on *before* the call, so the original's prologue saves it
+     * as its own Prev and the chain links outwards to us. */
+    outer.Prev = (EXCEPTION_REGISTRATION_RECORD *)~(uintptr_t)0;
+    outer.Handler = catch_outside;
+    write_fs(NFSU2_TEB_EXCEPTION_LIST, (unsigned int)(uintptr_t)&outer);
+
+    child_vtable[0] = (undefined4)(uintptr_t)raise_from_inside;
+    child = (undefined4)(uintptr_t)child_vtable;
+    memset(object, 0, sizeof(object));
+    object[2] = (undefined4)(uintptr_t)&child;
+
+    if (setjmp(g_seh_catch) == 0) {
+        original(object);
+        /* Returned normally: the exception was never raised, or was swallowed. */
+        return g_raised ? CHILD_NOT_CAUGHT : CHILD_NEVER_RAISED;
+    }
+    return g_caught_code == 0x20000042u ? CHILD_OK : CHILD_WRONG_CODE;
+}
+
+static void test_seh_through_original_handler(const struct nfsu2_pe_image *image)
+{
+    const char *probe = getenv("NFSU2_SEH_CXX_PROBE");
+    pid_t child;
+    int status = 0;
+
+    printf("\n# SEH through the game's own C++ frame handler\n");
+
+    if (!probe || !*probe || *probe == '0') {
+        printf("     off: the game's __CxxFrameHandler takes a CRT lock, and the CRT\n"
+               "     lock table at 0x81a340 is uninitialised without the game's own\n"
+               "     startup - _lock(10) and _mtinitlocknum(10) then recurse until the\n"
+               "     stack ends. NFSU2_SEH_CXX_PROBE=1 reproduces it; see the comment.\n");
+        return;
+    }
+
+    fflush(stdout);
+    child = fork();
+    if (child < 0) {
+        CHECK(0, "fork failed: %s", strerror(errno));
+        return;
+    }
+    if (child == 0)
+        _exit(seh_through_original_child(image));
+    if (waitpid(child, &status, 0) < 0) {
+        CHECK(0, "waitpid failed: %s", strerror(errno));
+        return;
+    }
+
+    if (WIFSIGNALED(status)) {
+        printf("     the child died on signal %d, as expected until the game's CRT is\n"
+               "     initialised - that is the finding, not a regression\n",
+               WTERMSIG(status));
+        return;
+    }
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == CHILD_OK,
+          "an exception raised inside the original was walked through the exe's "
+          "__CxxFrameHandler thunk (0x770fc8) and caught outside it");
+    if (WIFEXITED(status) && WEXITSTATUS(status) != CHILD_OK) {
+        printf("     child said %d: %s\n", WEXITSTATUS(status),
+               WEXITSTATUS(status) == CHILD_NEVER_RAISED ? "the vtable call never happened"
+               : WEXITSTATUS(status) == CHILD_WRONG_CODE ? "a different exception code arrived"
+               : "nothing caught it");
+    }
+}
+
 /* --- 2. against the original machine code -------------------------------- */
 
 static void test_against_original(const struct nfsu2_pe_image *image)
@@ -644,6 +795,7 @@ int main(int argc, char **argv)
         test_imports(&image);
         test_hybrid_execution(&image);
         test_teb(&image);
+        test_seh_through_original_handler(&image);
         test_against_original(&image);
         printf("\n     %d differential comparisons against original code\n",
                g_differential_checks);

@@ -212,6 +212,22 @@ implementations; tapi32 and ddraw are deliberate honest failures, and
 implemented rather than stubbed, because the from-scratch multiplayer this
 project is heading towards will be built on those same calls.
 
+### The CRT lock table, and why SEH was the easy half
+
+Structured exception handling turned out to be the tractable part of running the
+game's code: the handlers are all inside the exe, so only the OS half - dispatch
+the `fs:[0]` chain, `RaiseException`, `RtlUnwind`, signals to `EXCEPTION_RECORD` -
+had to be written, and it is about 500 lines.
+
+What stops an exception from being *caught* by the game's own handler is one level
+down. MSVC's `__CxxFrameHandler` takes a CRT lock before allocating its per-thread
+exception state, and `_lock(n)` bootstraps a NULL lock entry by calling
+`_mtinitlocknum(n)`, which itself takes lock 10 (`_LOCKTAB_LOCK`). CRT startup
+(`_mtinit`) normally fills entry 10 first, so the recursion stops after one step;
+with `_locktable` at 0x81a340 all zeroes it never does, and the stack ends. The
+next real dependency for hybrid execution is therefore the game's own CRT
+initialisation - not any missing Win32 API.
+
 ### Running game code natively
 
 Two things make this verifiable rather than hopeful, and both are new

@@ -109,18 +109,25 @@ int WINAPI MessageBoxA(HWND owner, LPCSTR text, LPCSTR caption, UINT type)
     return IDOK;
 }
 
+/*
+ * The game's own crash handler, if it registers one. exception.c calls it when
+ * nothing in the fs:[0] chain handled an exception, which is where Windows calls
+ * it too - so a game that writes a crash log still writes one here.
+ */
+static LPTOP_LEVEL_EXCEPTION_FILTER g_top_level_filter;
+
 LPTOP_LEVEL_EXCEPTION_FILTER WINAPI SetUnhandledExceptionFilter(
     LPTOP_LEVEL_EXCEPTION_FILTER filter)
 {
-    /*
-     * Deliberately not wired to a signal handler. SEH-based crash handling is
-     * a separate piece of work (a real port needs SIGSEGV -> EXCEPTION_RECORD
-     * translation), and installing a half-working one hides crashes we want
-     * to see natively during the port.
-     */
-    (void)filter;
-    NFSU2_STUB("SetUnhandledExceptionFilter");
-    return NULL;
+    LPTOP_LEVEL_EXCEPTION_FILTER previous = g_top_level_filter;
+
+    g_top_level_filter = filter;
+    return previous;
+}
+
+LPTOP_LEVEL_EXCEPTION_FILTER nfsu2_top_level_filter(void)
+{
+    return g_top_level_filter;
 }
 
 UINT WINAPI SetErrorMode(UINT mode)

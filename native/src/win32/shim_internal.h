@@ -56,6 +56,9 @@ int nfsu2_path_set_root(const char *root, char *out, size_t out_size);
 void nfsu2_path_reset(void);
 const char *nfsu2_path_root(void);
 
+/* The filter set by SetUnhandledExceptionFilter (process.c), for exception.c. */
+LPTOP_LEVEL_EXCEPTION_FILTER nfsu2_top_level_filter(void);
+
 /* Write the registry store back to disk if it changed (advapi32/registry.c). */
 void nfsu2_registry_flush(void);
 

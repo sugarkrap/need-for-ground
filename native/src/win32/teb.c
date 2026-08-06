@@ -1,5 +1,6 @@
 /*
- * teb.c - see teb.h.
+ * teb.c - see teb.h. Lives in src/win32/ because the TEB is Win32 runtime
+ * state - the SEH chain and LastError are both fields in it.
  *
  * Everything here is i386-only, and deliberately so: %fs is free on i386 Linux
  * (glibc uses %gs) which is what makes this a few dozen lines rather than a
