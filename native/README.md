@@ -593,32 +593,59 @@ cannot share one vtable. That is not a test artefact: it means ported renderer c
 calls DXVK directly and correctly, while any *original* renderer code still in the
 process needs a stdcall-to-cdecl shim in front of the device.
 
-**A decompiler bug, found the only way it could be.** A second function,
-`FUN_005bc7b0`, failed its differential test on the second of its two
-`SetRenderState` calls: the ported copy passed `param_1` where the original passed
-`param_2`. The machine code is unambiguous. The cause was upstream in
-`analysis/define_directx_types.py`, which declared every vtable slot `__stdcall`
-but *with no parameters* - so the decompiler could not know how many bytes a vtable
-call pops, and computed every later stack-argument read from the wrong esp.
+**A decompiler bug, found the only way it could be - and a wrong diagnosis of it.**
+A second function, `FUN_005bc7b0`, failed its differential test on the second of its
+two `SetRenderState` calls. The ground truth, measured by calling the original
+machine code with distinguishable arguments against a `__stdcall` fake device:
 
-That is fixed by deriving the counts from the SDK header rather than remembering
-them (`analysis/derive_vtable_args.py`, whose `--check` verifies the parse against
-the method order already recorded in `directx_vtables.py`: 119 methods for
-`IDirect3DDevice9` and 17 for `IDirect3D9`, exact). The decompiled output in a
-local tree still predates the fix, so `FUN_005bc7b0` is in the manifest's excluded
-list with that explanation - **and every other function in the renderer scope that
-reads an argument after a vtable call is suspect until the types are redefined and
-the functions re-exported.** Which is the real lesson: differential testing against
-the original machine code is not belt-and-braces here, it is the only thing that
-would ever have caught this.
+```
+SetRenderState(state=0x0f, value=0xaaaa0001)   <- param_1
+SetRenderState(state=0x18, value=0xbbbb0002)   <- param_2
+```
+
+Ghidra emits `param_1` for both. The second call reads `[esp+8]` *after* the first
+call, so it depends entirely on how many bytes the decompiler thinks that call
+purged, and it is getting that wrong by one 4-byte slot.
+
+The first diagnosis here was that `analysis/define_directx_types.py` declared every
+vtable slot `__stdcall` but *with no parameters*, leaving the decompiler unable to
+know the purge size. That was a real defect and it is fixed - the counts now come
+from the SDK headers rather than from memory (`analysis/derive_vtable_args.py`,
+whose `--check` verifies the parse against the method order already in
+`directx_vtables.py`: 119 methods for `IDirect3DDevice9`, 17 for `IDirect3D9`, 23
+and 30 for the DirectDraw pair, exact). It measurably improved the output: 58
+renderer functions changed on re-decompile, and `FUN_005ba070` now recovers a second
+parameter it had missed entirely.
+
+**It did not fix this bug.** With the declaration exactly as the SDK describes it -
+`int __stdcall SetRenderState(void *this, int, int)`, verified by reading the type
+back out of the project - the second call still says `param_1`. Adding one more
+declared parameter shifts the reading by exactly one slot, so the purge does track
+the declared size; it is simply 4 bytes short, as though `this` were not on the
+stack. None of the four plausible declarations fixes it (`__stdcall`/`__thiscall`,
+with and without an explicit `this`): the SDK-accurate one renders the arguments
+correctly and mistracks the stack, and the others mistrack the arguments too. The
+cause is not identified.
+
+So the consequence stands, and is now firmer rather than resolved: **a decompiled
+renderer function that reads an argument after a vtable call may be off by one
+slot.** `FUN_005bc7b0` stays in the excluded list with the measurement above.
+Differential testing against the original machine code is not belt-and-braces here -
+it is the only thing that catches this, and it caught it on the second function
+anyone tried.
 
 ### What comes next
 
-1. Re-run `analysis/define_directx_types.py` and re-export the renderer scope, then
-   widen the manifest into it in bulk. The three mechanisms above are what that
-   needs, and the decompiler bug above is why doing it *before* re-exporting would
-   have produced quietly wrong code.
-2. Real SEH, now that the chain is reachable: `RaiseException`/`RtlUnwind` still
+1. Widen the manifest into the renderer scope, one function at a time rather than
+   in bulk, because of the purge bug above: a function whose arguments are all read
+   before its first vtable call is safe, and one that reads an argument afterwards
+   needs its decompilation checked against the disassembly by hand. The
+   differential test is what decides, and it is cheap to add per function now that
+   the harness exists.
+2. Or find the purge bug. A ten-line reproduction is in the repo history of this
+   section; the next thing to try is Ghidra's own compiler-spec model for
+   `__stdcall` purges on indirect calls, rather than the data-type declaration.
+3. Real SEH, now that the chain is reachable: `RaiseException`/`RtlUnwind` still
    abort rather than walking it (gap 2 above). The TEB was the prerequisite.
-3. A TEB per thread as soon as the port creates threads - `nfsu2_teb_install()` is
+4. A TEB per thread as soon as the port creates threads - `nfsu2_teb_install()` is
    per-thread by construction, so `CreateThread` should call it on the new thread.

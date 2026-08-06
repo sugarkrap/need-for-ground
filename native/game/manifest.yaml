@@ -99,22 +99,25 @@ excluded:
   - address: 0x5bc7b0
     symbol: FUN_005bc7b0
     reason: >-
-      The decompilation is wrong, and finding out why is the most useful thing
-      this manifest has produced. It was added as a second renderer function -
-      two SetRenderState calls on one branch - and the differential test failed
-      on the second call: the ported copy passed param_1 where the original
-      passed param_2. The machine code is unambiguous
-      (`push [esp+8]` before the second call, after the first stdcall callee
-      popped its 12 bytes). The cause is upstream, in
-      analysis/define_directx_types.py: it declared each vtable slot __stdcall
-      but with no parameters, so the decompiler could not know how many bytes a
-      vtable call pops and computed every later stack-argument read from the
-      wrong esp. That is now fixed by deriving the counts from the SDK header
-      (analysis/derive_vtable_args.py), but the decompiled output in this tree
-      predates it. Re-run the type definer and re-export this function, and it
-      should come back correct - and every other function in
-      ../../DIRECTX_SCOPE.md that reads an argument after a vtable call is
-      suspect until then.
+      The decompilation is wrong, and it is wrong in a way that would not have
+      shown up any other way. Ghidra emits
+      `SetRenderState(dev, 0xf, param_1)` followed by
+      `SetRenderState(dev, 0x18, param_1)`. Running the original machine code with
+      distinguishable arguments against a __stdcall fake device gives
+      `(0x0f, param_1)` then `(0x18, param_2)` - the second call reads [esp+8]
+      *after* the first call returns, so it depends on how many bytes the
+      decompiler thinks that call purged, and it is one 4-byte slot short.
+      Declaring each vtable method's real parameters
+      (analysis/derive_vtable_args.py, now wired into define_directx_types.py) was
+      necessary and improved a lot of the renderer output - FUN_005ba070 recovers
+      a parameter it used to miss - but it does not fix this: with
+      `int __stdcall SetRenderState(void *this, int, int)` in the project, verified
+      by reading the type back, the second call still says param_1. Adding a
+      parameter shifts the reading by exactly one slot, so the purge tracks the
+      declared size and is simply short by the `this` pointer; none of
+      __stdcall/__thiscall with or without an explicit `this` reads correctly. Any
+      renderer function that reads an argument *after* a vtable call is suspect for
+      the same reason - the differential test is what decides.
   - address: 0x75d950
     symbol: __SEH_prolog
     reason: >-
