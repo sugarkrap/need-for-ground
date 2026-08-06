@@ -97,8 +97,20 @@ BOOL WINAPI IsDebuggerPresent(void)
     return present;
 }
 
+/*
+ * How many times the same message may repeat before this is called a loop.
+ * A modal dialog with nobody to answer it is not a pause, it is a hang: the game
+ * asks, we answer IDOK, it asks again. Twenty of anything identical is already
+ * pathological, and the alternative to stopping is an infinite loop writing an
+ * infinite log - which cost 68 GB of someone's disk before this guard existed.
+ */
+#define MESSAGEBOX_REPEAT_LIMIT 20
+
 int WINAPI MessageBoxA(HWND owner, LPCSTR text, LPCSTR caption, UINT type)
 {
+    static char last[256];
+    static int repeats;
+
     /*
      * No dialog: this only ever shows fatal-error boxes, and losing them to a
      * silent exit is exactly the failure mode that wastes debugging time.
@@ -106,6 +118,23 @@ int WINAPI MessageBoxA(HWND owner, LPCSTR text, LPCSTR caption, UINT type)
      */
     (void)owner; (void)type;
     fprintf(stderr, "[MessageBox] %s: %s\n", caption ? caption : "", text ? text : "");
+
+    if (text && strncmp(last, text, sizeof(last) - 1) == 0) {
+        if (++repeats >= MESSAGEBOX_REPEAT_LIMIT) {
+            fprintf(stderr,
+                    "\n[nfsu2] the same message box %d times: the game is looping on a\n"
+                    "        dialog that needs an answer this port cannot give. Stopping\n"
+                    "        rather than spinning - the message above is the thing to fix.\n",
+                    repeats);
+            exit(1);
+        }
+    } else {
+        repeats = 0;
+        if (text)
+            snprintf(last, sizeof(last), "%s", text);
+        else
+            last[0] = '\0';
+    }
     return IDOK;
 }
 

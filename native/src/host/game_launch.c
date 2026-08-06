@@ -35,6 +35,7 @@
 
 #include <libgen.h>
 #include <stdint.h>
+#include <sys/prctl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -146,6 +147,18 @@ int main(int argc, char **argv)
         return 1;
     }
     if (child == 0) {
+        /*
+         * Die with the parent, and this is not belt-and-braces: without it, a
+         * parent killed by a timeout (or Ctrl-C, or a supervisor) leaves the game
+         * running with the log pipe still open. A game stuck in a modal retry loop
+         * then writes to that log forever - which is exactly what happened here,
+         * to the tune of tens of gigabytes across four abandoned children.
+         */
+        prctl(PR_SET_PDEATHSIG, SIGKILL);
+        /* The parent may already be gone: check, rather than race. */
+        if (getppid() == 1)
+            _exit(4);
+
         if (nfsu2_teb_install(error, sizeof(error)) != 0) {
             fprintf(stderr, "TEB: %s\n", error);
             _exit(3);

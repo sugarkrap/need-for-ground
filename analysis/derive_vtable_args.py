@@ -47,21 +47,19 @@ WIDE_TYPES = {"UINT64", "ULONGLONG", "LONGLONG", "__int64", "DWORDLONG", "double
 # HRESULT method - hence --check, which compares against a list built by hand from
 # the same headers and would have caught it immediately.
 METHOD = re.compile(
-    r"STDMETHOD(?:_\s*\(\s*[^,]+?\s*,\s*|\s*\(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*"
-    r"\(\s*(THIS_?)([^;]*?)\)\s*PURE",
+    r"STDMETHOD(?:_\s*\(\s*(?P<ret>[^,]+?)\s*,\s*|\s*\(\s*)(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\)\s*"
+    r"\(\s*(?P<this>THIS_?)(?P<params>[^;]*?)\)\s*PURE",
     re.S,
 )
 INTERFACE_START = re.compile(r"DECLARE_INTERFACE(?:_IID_|_)?\(\s*([A-Za-z0-9_]+)\s*,")
 
 
-def argument_slots(parameters: str) -> int:
-    """Number of 4-byte stack slots the parameter list occupies, `this` aside."""
+def split_parameters(parameters: str) -> list[str]:
+    """Top-level comma split, so `void (*cb)(int, int)` stays in one piece."""
     text = parameters.strip()
     if not text:
-        return 0
-    slots = 0
-    depth = 0
-    current = ""
+        return []
+    out, depth, current = [], 0, ""
     for character in text + ",":
         if character in "([":
             depth += 1
@@ -69,11 +67,75 @@ def argument_slots(parameters: str) -> int:
             depth -= 1
         if character == "," and depth == 0:
             if current.strip():
-                slots += 2 if any(w in current for w in WIDE_TYPES) else 1
+                out.append(current.strip())
             current = ""
         else:
             current += character
-    return slots
+    return out
+
+
+# A COM interface pointer, which cannot cross an ABI boundary untranslated: one
+# star is something coming *in* that we may have handed out wrapped, two stars is
+# something going *out* that has to be wrapped before the caller touches it.
+INTERFACE_PARAM = re.compile(r"\b(I[A-Za-z0-9_]*?9(?:Ex)?|IDirect3D[A-Za-z0-9_]*)\s*(\*\*?)")
+
+
+def classify(parameter: str) -> tuple[int, str | None, int]:
+    """(slots, interface name, star count) for one parameter."""
+    slots = 2 if any(w in parameter for w in WIDE_TYPES) else 1
+    match = INTERFACE_PARAM.search(parameter)
+    if not match:
+        return slots, None, 0
+    return slots, match.group(1), len(match.group(2))
+
+
+def argument_slots(parameters: str) -> int:
+    """Number of 4-byte stack slots the parameter list occupies, `this` aside."""
+    return sum(classify(p)[0] for p in split_parameters(parameters))
+
+
+def describe(parameters: str) -> list[dict]:
+    """Per-parameter detail, with the stack slot each one starts at (1-based,
+    `this` excluded - the thunks take `this` separately)."""
+    out, slot = [], 1
+    for parameter in split_parameters(parameters):
+        slots, interface, stars = classify(parameter)
+        out.append({
+            "slot": slot,
+            "slots": slots,
+            "text": parameter,
+            "interface": interface,
+            "stars": stars,
+        })
+        slot += slots
+    return out
+
+
+def parse_detailed(header_text: str) -> dict[str, list[dict]]:
+    """{interface: [{name, slots, params:[...]}, ...]} in vtable order."""
+    interfaces: dict[str, list[dict]] = {}
+    starts = [(m.start(), m.group(1)) for m in INTERFACE_START.finditer(header_text)]
+    for index, (offset, name) in enumerate(starts):
+        end = starts[index + 1][0] if index + 1 < len(starts) else len(header_text)
+        body = header_text[offset:end]
+        methods = []
+        for match in METHOD.finditer(body):
+            method_name = match.group("name")
+            this_marker = match.group("this")
+            parameters = match.group("params")
+            described = describe(parameters) if this_marker == "THIS_" else []
+            methods.append({
+                "name": method_name,
+                # HRESULT when STDMETHOD() carried no explicit type. The only ones
+                # that matter to a thunk are float/double, which come back on the
+                # x87 stack rather than in EAX.
+                "returns": (match.group("ret") or "HRESULT").strip(),
+                "slots": sum(p["slots"] for p in described),
+                "params": described,
+            })
+        if methods:
+            interfaces[name] = methods
+    return interfaces
 
 
 def parse(header_text: str) -> dict[str, list[tuple[str, int]]]:
@@ -85,7 +147,9 @@ def parse(header_text: str) -> dict[str, list[tuple[str, int]]]:
         body = header_text[offset:end]
         methods = []
         for match in METHOD.finditer(body):
-            method_name, this_marker, parameters = match.group(1), match.group(2), match.group(3)
+            method_name = match.group("name")
+            this_marker = match.group("this")
+            parameters = match.group("params")
             # `THIS` means no further arguments; `THIS_` means a list follows.
             methods.append(
                 (method_name, argument_slots(parameters) if this_marker == "THIS_" else 0)
@@ -117,6 +181,8 @@ def main() -> int:
                         help="limit output to these interfaces (repeatable)")
     parser.add_argument("--check", action="store_true",
                         help="compare parsed method order against directx_vtables.py")
+    parser.add_argument("--json", action="store_true",
+                        help="full per-method detail, for the bridge generator")
     args = parser.parse_args()
 
     with open(args.header, encoding="utf-8", errors="replace") as handle:
@@ -124,6 +190,15 @@ def main() -> int:
 
     if args.interface:
         interfaces = {k: v for k, v in interfaces.items() if k in args.interface}
+
+    if args.json:
+        import json
+        with open(args.header, encoding="utf-8", errors="replace") as handle:
+            detailed = parse_detailed(handle.read())
+        if args.interface:
+            detailed = {k: v for k, v in detailed.items() if k in args.interface}
+        print(json.dumps(detailed, indent=1))
+        return 0
 
     if args.check:
         failures = 0
