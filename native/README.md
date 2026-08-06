@@ -480,6 +480,51 @@ decides. The registry keys it looked for and did not find - notably
 `...\Need for Speed Underground 2\ergc`, the registration entry a real install
 writes - are the other half of the answer, and `registry.ini` can carry them.
 
+### PE resources, because the shaders are in them
+
+The lead from the bridge was a null-pointer fault at `0x5d180a`, in a `__thiscall`
+that reads a COM pointer from `this+0x20` and immediately dereferences its vtable.
+`eax` was 0. Tracing every *failing* D3D9 call showed none - so nothing in the
+graphics path had failed. What fills that field is visible in the caller:
+
+```c
+FUN_00640852(PTR_00870974, 0, (&PTR_s_IDI_WORLD_FX_007ff854)[param_2 * 0x23], ...,
+             param_1 + 0x20, ...);   /* device, a resource name, an out pointer */
+FUN_005d1800();                      /* which then dereferences it */
+```
+
+**The game loads its shader effects from PE resources.** `resource.c` failed every
+call, on the stated reasoning that a native ELF has no `.rsrc` and the game only
+wanted its icon and its version block. The first half is still true; the second was
+wrong, and the symptom was a fault three call levels away from anything mentioning
+resources.
+
+No extraction tool was needed after all. The loader maps *every* section of the exe
+at its own base, `.rsrc` included, so the resource directory is already in memory in
+exactly the layout PE/COFF describes - a three-level tree of type, then name, then
+language - and walking it is the whole implementation. `FindResourceA` returns a
+pointer to the leaf `IMAGE_RESOURCE_DATA_ENTRY`; `LoadResource` and `LockResource`
+both resolve to `image base + OffsetToData`, because in a mapped image the bytes are
+already there and there is nothing to commit or unlock.
+
+With that, the game gets its shaders:
+
+```
+[nfsu2/shim] FindResourceA(#10, IDI_WORLD_FX) = 0x8bc4e8
+[nfsu2/shim] FindResourceA(#10, IDI_CAR_FX) = 0x8bc388
+[nfsu2/shim] d3d9 bridge: wrapped IDirect3DPixelShader9 ...
+[nfsu2/shim] d3d9 bridge: wrapped IDirect3DVertexShader9 ...
+[nfsu2/shim] d3d9 bridge: wrapped IDirect3DTexture9 ...
+[game] EZ Wheel Wrapper v4.26
+```
+
+**23 resources found, 519 D3D9 objects wrapped** - shaders, textures, vertex and
+index buffers, state blocks, vertex declarations - and the game reaches the point of
+printing its own log line. It stops next in *input* initialisation, on
+`IDirectInput8::EnumDevicesBySemantics` (DirectInput's action-mapping API, which is
+what "EZ Wheel Wrapper" wants), then faults at `0x80000001` - an address that is
+plainly a returned status being called as a function pointer.
+
 ## Known gaps, in rough priority order
 
 1. **Audio.** `mss32.dll` (Miles Sound System) is not in the import list at all -

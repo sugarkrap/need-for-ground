@@ -133,6 +133,21 @@ const thunk = (iface: string, method: Method, slot: number, known: Set<string>):
     }
   }
 
+  /*
+   * A failing call, named. Only for HRESULT returns and only on the FAILED() test:
+   * plenty of D3D9 methods return a non-zero value that means something else
+   * entirely - GetAdapterModeCount returns a count, TestCooperativeLevel returns
+   * D3DERR_DEVICELOST as normal operation - so "non-zero is an error" would be
+   * noise. This is how a silently-failed initialisation step becomes findable.
+   */
+  if (!isFloat && /^HRESULT$/i.test(method.returns)) {
+    lines.push("");
+    lines.push("    if (result & 0x80000000u)");
+    lines.push(
+      `        nfsu2_shim_trace("d3d9 FAILED 0x%08x  ${iface}::${method.name}", result);`,
+    );
+  }
+
   lines.push("    return result;");
   lines.push("}");
   return lines.join("\n");

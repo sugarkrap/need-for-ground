@@ -15,6 +15,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3D9_RegisterSoftwareDevice(struct nfsu
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[3])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3D9::RegisterSoftwareDevice", result);
     return result;
 }
 
@@ -31,6 +34,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3D9_GetAdapterIdentifier(struct nfsu2_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[5])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3D9::GetAdapterIdentifier", result);
     return result;
 }
 
@@ -47,6 +53,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3D9_EnumAdapterModes(struct nfsu2_d3d9
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[7])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3D9::EnumAdapterModes", result);
     return result;
 }
 
@@ -55,6 +64,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3D9_GetAdapterDisplayMode(struct nfsu2
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[8])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3D9::GetAdapterDisplayMode", result);
     return result;
 }
 
@@ -63,6 +75,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3D9_CheckDeviceType(struct nfsu2_d3d9_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[9])(self->real, a1, a2, a3, a4, a5);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3D9::CheckDeviceType", result);
     return result;
 }
 
@@ -71,6 +86,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3D9_CheckDeviceFormat(struct nfsu2_d3d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[10])(self->real, a1, a2, a3, a4, a5, a6);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3D9::CheckDeviceFormat", result);
     return result;
 }
 
@@ -79,6 +97,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3D9_CheckDeviceMultiSampleType(struct 
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[11])(self->real, a1, a2, a3, a4, a5, a6);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3D9::CheckDeviceMultiSampleType", result);
     return result;
 }
 
@@ -87,6 +108,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3D9_CheckDepthStencilMatch(struct nfsu
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[12])(self->real, a1, a2, a3, a4, a5);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3D9::CheckDepthStencilMatch", result);
     return result;
 }
 
@@ -95,6 +119,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3D9_CheckDeviceFormatConversion(struct
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[13])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3D9::CheckDeviceFormatConversion", result);
     return result;
 }
 
@@ -103,6 +130,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3D9_GetDeviceCaps(struct nfsu2_d3d9_br
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[14])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3D9::GetDeviceCaps", result);
     return result;
 }
 
@@ -125,6 +155,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3D9_CreateDevice(struct nfsu2_d3d9_bri
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3D9::CreateDevice", result);
     return result;
 }
 
@@ -161,6 +194,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DBaseTexture9_GetDevice(struct nfsu2_
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DBaseTexture9::GetDevice", result);
     return result;
 }
 
@@ -169,6 +205,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DBaseTexture9_SetPrivateData(struct n
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[4])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DBaseTexture9::SetPrivateData", result);
     return result;
 }
 
@@ -177,6 +216,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DBaseTexture9_GetPrivateData(struct n
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[5])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DBaseTexture9::GetPrivateData", result);
     return result;
 }
 
@@ -185,6 +227,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DBaseTexture9_FreePrivateData(struct 
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[6])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DBaseTexture9::FreePrivateData", result);
     return result;
 }
 
@@ -249,6 +294,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DBaseTexture9_SetAutoGenFilterType(st
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[14])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DBaseTexture9::SetAutoGenFilterType", result);
     return result;
 }
 
@@ -301,6 +349,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DCubeTexture9_GetDevice(struct nfsu2_
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DCubeTexture9::GetDevice", result);
     return result;
 }
 
@@ -309,6 +360,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DCubeTexture9_SetPrivateData(struct n
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[4])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DCubeTexture9::SetPrivateData", result);
     return result;
 }
 
@@ -317,6 +371,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DCubeTexture9_GetPrivateData(struct n
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[5])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DCubeTexture9::GetPrivateData", result);
     return result;
 }
 
@@ -325,6 +382,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DCubeTexture9_FreePrivateData(struct 
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[6])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DCubeTexture9::FreePrivateData", result);
     return result;
 }
 
@@ -389,6 +449,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DCubeTexture9_SetAutoGenFilterType(st
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[14])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DCubeTexture9::SetAutoGenFilterType", result);
     return result;
 }
 
@@ -413,6 +476,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DCubeTexture9_GetLevelDesc(struct nfs
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[17])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DCubeTexture9::GetLevelDesc", result);
     return result;
 }
 
@@ -427,6 +493,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DCubeTexture9_GetCubeMapSurface(struc
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DSurface9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DCubeTexture9::GetCubeMapSurface", result);
     return result;
 }
 
@@ -435,6 +504,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DCubeTexture9_LockRect(struct nfsu2_d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[19])(self->real, a1, a2, a3, a4, a5);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DCubeTexture9::LockRect", result);
     return result;
 }
 
@@ -443,6 +515,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DCubeTexture9_UnlockRect(struct nfsu2
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[20])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DCubeTexture9::UnlockRect", result);
     return result;
 }
 
@@ -451,6 +526,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DCubeTexture9_AddDirtyRect(struct nfs
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[21])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DCubeTexture9::AddDirtyRect", result);
     return result;
 }
 
@@ -486,6 +564,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_TestCooperativeLevel(struct 
     unsigned result;
 
     result = ((unsigned (*)(void *))self->real_vtbl[3])(self->real);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::TestCooperativeLevel", result);
     return result;
 }
 
@@ -502,6 +583,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_EvictManagedResources(struct
     unsigned result;
 
     result = ((unsigned (*)(void *))self->real_vtbl[5])(self->real);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::EvictManagedResources", result);
     return result;
 }
 
@@ -516,6 +600,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetDirect3D(struct nfsu2_d3d
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3D9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetDirect3D", result);
     return result;
 }
 
@@ -524,6 +611,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetDeviceCaps(struct nfsu2_d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[7])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetDeviceCaps", result);
     return result;
 }
 
@@ -532,6 +622,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetDisplayMode(struct nfsu2_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[8])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetDisplayMode", result);
     return result;
 }
 
@@ -540,6 +633,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetCreationParameters(struct
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[9])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetCreationParameters", result);
     return result;
 }
 
@@ -549,6 +645,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetCursorProperties(struct n
 
     a3 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a3); /* IDirect3DSurface9 * */
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[10])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetCursorProperties", result);
     return result;
 }
 
@@ -579,6 +678,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_CreateAdditionalSwapChain(st
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DSwapChain9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::CreateAdditionalSwapChain", result);
     return result;
 }
 
@@ -593,6 +695,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetSwapChain(struct nfsu2_d3
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DSwapChain9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetSwapChain", result);
     return result;
 }
 
@@ -609,6 +714,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_Reset(struct nfsu2_d3d9_brid
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[16])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::Reset", result);
     return result;
 }
 
@@ -617,6 +725,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_Present(struct nfsu2_d3d9_br
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[17])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::Present", result);
     return result;
 }
 
@@ -631,6 +742,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetBackBuffer(struct nfsu2_d
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DSurface9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetBackBuffer", result);
     return result;
 }
 
@@ -639,6 +753,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetRasterStatus(struct nfsu2
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[19])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetRasterStatus", result);
     return result;
 }
 
@@ -647,6 +764,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetDialogBoxMode(struct nfsu
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[20])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetDialogBoxMode", result);
     return result;
 }
 
@@ -677,6 +797,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_CreateTexture(struct nfsu2_d
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DTexture9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::CreateTexture", result);
     return result;
 }
 
@@ -691,6 +814,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_CreateVolumeTexture(struct n
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DVolumeTexture9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::CreateVolumeTexture", result);
     return result;
 }
 
@@ -705,6 +831,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_CreateCubeTexture(struct nfs
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DCubeTexture9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::CreateCubeTexture", result);
     return result;
 }
 
@@ -719,6 +848,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_CreateVertexBuffer(struct nf
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DVertexBuffer9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::CreateVertexBuffer", result);
     return result;
 }
 
@@ -733,6 +865,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_CreateIndexBuffer(struct nfs
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DIndexBuffer9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::CreateIndexBuffer", result);
     return result;
 }
 
@@ -747,6 +882,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_CreateRenderTarget(struct nf
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DSurface9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::CreateRenderTarget", result);
     return result;
 }
 
@@ -761,6 +899,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_CreateDepthStencilSurface(st
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DSurface9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::CreateDepthStencilSurface", result);
     return result;
 }
 
@@ -771,6 +912,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_UpdateSurface(struct nfsu2_d
     a1 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a1); /* IDirect3DSurface9 * */
     a3 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a3); /* IDirect3DSurface9 * */
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[30])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::UpdateSurface", result);
     return result;
 }
 
@@ -781,6 +925,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_UpdateTexture(struct nfsu2_d
     a1 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a1); /* IDirect3DBaseTexture9 * */
     a2 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a2); /* IDirect3DBaseTexture9 * */
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[31])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::UpdateTexture", result);
     return result;
 }
 
@@ -791,6 +938,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetRenderTargetData(struct n
     a1 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a1); /* IDirect3DSurface9 * */
     a2 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a2); /* IDirect3DSurface9 * */
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[32])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetRenderTargetData", result);
     return result;
 }
 
@@ -800,6 +950,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetFrontBufferData(struct nf
 
     a2 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a2); /* IDirect3DSurface9 * */
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[33])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetFrontBufferData", result);
     return result;
 }
 
@@ -810,6 +963,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_StretchRect(struct nfsu2_d3d
     a1 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a1); /* IDirect3DSurface9 * */
     a3 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a3); /* IDirect3DSurface9 * */
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[34])(self->real, a1, a2, a3, a4, a5);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::StretchRect", result);
     return result;
 }
 
@@ -819,6 +975,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_ColorFill(struct nfsu2_d3d9_
 
     a1 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a1); /* IDirect3DSurface9 * */
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[35])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::ColorFill", result);
     return result;
 }
 
@@ -833,6 +992,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_CreateOffscreenPlainSurface(
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DSurface9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::CreateOffscreenPlainSurface", result);
     return result;
 }
 
@@ -842,6 +1004,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetRenderTarget(struct nfsu2
 
     a2 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a2); /* IDirect3DSurface9 * */
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[37])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetRenderTarget", result);
     return result;
 }
 
@@ -856,6 +1021,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetRenderTarget(struct nfsu2
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DSurface9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetRenderTarget", result);
     return result;
 }
 
@@ -865,6 +1033,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetDepthStencilSurface(struc
 
     a1 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a1); /* IDirect3DSurface9 * */
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[39])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetDepthStencilSurface", result);
     return result;
 }
 
@@ -879,6 +1050,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetDepthStencilSurface(struc
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DSurface9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetDepthStencilSurface", result);
     return result;
 }
 
@@ -887,6 +1061,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_BeginScene(struct nfsu2_d3d9
     unsigned result;
 
     result = ((unsigned (*)(void *))self->real_vtbl[41])(self->real);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::BeginScene", result);
     return result;
 }
 
@@ -895,6 +1072,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_EndScene(struct nfsu2_d3d9_b
     unsigned result;
 
     result = ((unsigned (*)(void *))self->real_vtbl[42])(self->real);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::EndScene", result);
     return result;
 }
 
@@ -903,6 +1083,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_Clear(struct nfsu2_d3d9_brid
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[43])(self->real, a1, a2, a3, a4, a5, a6);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::Clear", result);
     return result;
 }
 
@@ -911,6 +1094,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetTransform(struct nfsu2_d3
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[44])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetTransform", result);
     return result;
 }
 
@@ -919,6 +1105,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetTransform(struct nfsu2_d3
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[45])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetTransform", result);
     return result;
 }
 
@@ -927,6 +1116,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_MultiplyTransform(struct nfs
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[46])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::MultiplyTransform", result);
     return result;
 }
 
@@ -935,6 +1127,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetViewport(struct nfsu2_d3d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[47])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetViewport", result);
     return result;
 }
 
@@ -943,6 +1138,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetViewport(struct nfsu2_d3d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[48])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetViewport", result);
     return result;
 }
 
@@ -951,6 +1149,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetMaterial(struct nfsu2_d3d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[49])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetMaterial", result);
     return result;
 }
 
@@ -959,6 +1160,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetMaterial(struct nfsu2_d3d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[50])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetMaterial", result);
     return result;
 }
 
@@ -967,6 +1171,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetLight(struct nfsu2_d3d9_b
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[51])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetLight", result);
     return result;
 }
 
@@ -975,6 +1182,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetLight(struct nfsu2_d3d9_b
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[52])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetLight", result);
     return result;
 }
 
@@ -983,6 +1193,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_LightEnable(struct nfsu2_d3d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[53])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::LightEnable", result);
     return result;
 }
 
@@ -991,6 +1204,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetLightEnable(struct nfsu2_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[54])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetLightEnable", result);
     return result;
 }
 
@@ -999,6 +1215,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetClipPlane(struct nfsu2_d3
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[55])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetClipPlane", result);
     return result;
 }
 
@@ -1007,6 +1226,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetClipPlane(struct nfsu2_d3
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[56])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetClipPlane", result);
     return result;
 }
 
@@ -1015,6 +1237,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetRenderState(struct nfsu2_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[57])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetRenderState", result);
     return result;
 }
 
@@ -1023,6 +1248,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetRenderState(struct nfsu2_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[58])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetRenderState", result);
     return result;
 }
 
@@ -1037,6 +1265,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_CreateStateBlock(struct nfsu
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DStateBlock9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::CreateStateBlock", result);
     return result;
 }
 
@@ -1045,6 +1276,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_BeginStateBlock(struct nfsu2
     unsigned result;
 
     result = ((unsigned (*)(void *))self->real_vtbl[60])(self->real);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::BeginStateBlock", result);
     return result;
 }
 
@@ -1059,6 +1293,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_EndStateBlock(struct nfsu2_d
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DStateBlock9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::EndStateBlock", result);
     return result;
 }
 
@@ -1067,6 +1304,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetClipStatus(struct nfsu2_d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[62])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetClipStatus", result);
     return result;
 }
 
@@ -1075,6 +1315,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetClipStatus(struct nfsu2_d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[63])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetClipStatus", result);
     return result;
 }
 
@@ -1089,6 +1332,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetTexture(struct nfsu2_d3d9
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DBaseTexture9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetTexture", result);
     return result;
 }
 
@@ -1098,6 +1344,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetTexture(struct nfsu2_d3d9
 
     a2 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a2); /* IDirect3DBaseTexture9 * */
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[65])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetTexture", result);
     return result;
 }
 
@@ -1106,6 +1355,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetTextureStageState(struct 
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[66])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetTextureStageState", result);
     return result;
 }
 
@@ -1114,6 +1366,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetTextureStageState(struct 
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[67])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetTextureStageState", result);
     return result;
 }
 
@@ -1122,6 +1377,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetSamplerState(struct nfsu2
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[68])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetSamplerState", result);
     return result;
 }
 
@@ -1130,6 +1388,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetSamplerState(struct nfsu2
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[69])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetSamplerState", result);
     return result;
 }
 
@@ -1138,6 +1399,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_ValidateDevice(struct nfsu2_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[70])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::ValidateDevice", result);
     return result;
 }
 
@@ -1146,6 +1410,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetPaletteEntries(struct nfs
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[71])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetPaletteEntries", result);
     return result;
 }
 
@@ -1154,6 +1421,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetPaletteEntries(struct nfs
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[72])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetPaletteEntries", result);
     return result;
 }
 
@@ -1162,6 +1432,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetCurrentTexturePalette(str
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[73])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetCurrentTexturePalette", result);
     return result;
 }
 
@@ -1170,6 +1443,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetCurrentTexturePalette(str
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[74])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetCurrentTexturePalette", result);
     return result;
 }
 
@@ -1178,6 +1454,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetScissorRect(struct nfsu2_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[75])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetScissorRect", result);
     return result;
 }
 
@@ -1186,6 +1465,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetScissorRect(struct nfsu2_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[76])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetScissorRect", result);
     return result;
 }
 
@@ -1194,6 +1476,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetSoftwareVertexProcessing(
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[77])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetSoftwareVertexProcessing", result);
     return result;
 }
 
@@ -1210,6 +1495,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetNPatchMode(struct nfsu2_d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[79])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetNPatchMode", result);
     return result;
 }
 
@@ -1226,6 +1514,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_DrawPrimitive(struct nfsu2_d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[81])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::DrawPrimitive", result);
     return result;
 }
 
@@ -1234,6 +1525,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_DrawIndexedPrimitive(struct 
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[82])(self->real, a1, a2, a3, a4, a5, a6);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::DrawIndexedPrimitive", result);
     return result;
 }
 
@@ -1242,6 +1536,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_DrawPrimitiveUP(struct nfsu2
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[83])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::DrawPrimitiveUP", result);
     return result;
 }
 
@@ -1250,6 +1547,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_DrawIndexedPrimitiveUP(struc
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[84])(self->real, a1, a2, a3, a4, a5, a6, a7, a8);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::DrawIndexedPrimitiveUP", result);
     return result;
 }
 
@@ -1260,6 +1560,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_ProcessVertices(struct nfsu2
     a4 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a4); /* IDirect3DVertexBuffer9 * */
     a5 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a5); /* IDirect3DVertexDeclaration9 * */
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[85])(self->real, a1, a2, a3, a4, a5, a6);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::ProcessVertices", result);
     return result;
 }
 
@@ -1274,6 +1577,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_CreateVertexDeclaration(stru
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DVertexDeclaration9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::CreateVertexDeclaration", result);
     return result;
 }
 
@@ -1283,6 +1589,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetVertexDeclaration(struct 
 
     a1 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a1); /* IDirect3DVertexDeclaration9 * */
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[87])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetVertexDeclaration", result);
     return result;
 }
 
@@ -1297,6 +1606,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetVertexDeclaration(struct 
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DVertexDeclaration9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetVertexDeclaration", result);
     return result;
 }
 
@@ -1305,6 +1617,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetFVF(struct nfsu2_d3d9_bri
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[89])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetFVF", result);
     return result;
 }
 
@@ -1313,6 +1628,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetFVF(struct nfsu2_d3d9_bri
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[90])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetFVF", result);
     return result;
 }
 
@@ -1327,6 +1645,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_CreateVertexShader(struct nf
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DVertexShader9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::CreateVertexShader", result);
     return result;
 }
 
@@ -1336,6 +1657,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetVertexShader(struct nfsu2
 
     a1 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a1); /* IDirect3DVertexShader9 * */
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[92])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetVertexShader", result);
     return result;
 }
 
@@ -1350,6 +1674,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetVertexShader(struct nfsu2
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DVertexShader9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetVertexShader", result);
     return result;
 }
 
@@ -1358,6 +1685,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetVertexShaderConstantF(str
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[94])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetVertexShaderConstantF", result);
     return result;
 }
 
@@ -1366,6 +1696,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetVertexShaderConstantF(str
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[95])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetVertexShaderConstantF", result);
     return result;
 }
 
@@ -1374,6 +1707,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetVertexShaderConstantI(str
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[96])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetVertexShaderConstantI", result);
     return result;
 }
 
@@ -1382,6 +1718,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetVertexShaderConstantI(str
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[97])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetVertexShaderConstantI", result);
     return result;
 }
 
@@ -1390,6 +1729,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetVertexShaderConstantB(str
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[98])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetVertexShaderConstantB", result);
     return result;
 }
 
@@ -1398,6 +1740,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetVertexShaderConstantB(str
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[99])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetVertexShaderConstantB", result);
     return result;
 }
 
@@ -1407,6 +1752,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetStreamSource(struct nfsu2
 
     a2 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a2); /* IDirect3DVertexBuffer9 * */
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[100])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetStreamSource", result);
     return result;
 }
 
@@ -1421,6 +1769,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetStreamSource(struct nfsu2
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DVertexBuffer9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetStreamSource", result);
     return result;
 }
 
@@ -1429,6 +1780,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetStreamSourceFreq(struct n
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[102])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetStreamSourceFreq", result);
     return result;
 }
 
@@ -1437,6 +1791,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetStreamSourceFreq(struct n
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[103])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetStreamSourceFreq", result);
     return result;
 }
 
@@ -1446,6 +1803,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetIndices(struct nfsu2_d3d9
 
     a1 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a1); /* IDirect3DIndexBuffer9 * */
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[104])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetIndices", result);
     return result;
 }
 
@@ -1460,6 +1820,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetIndices(struct nfsu2_d3d9
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DIndexBuffer9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetIndices", result);
     return result;
 }
 
@@ -1474,6 +1837,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_CreatePixelShader(struct nfs
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DPixelShader9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::CreatePixelShader", result);
     return result;
 }
 
@@ -1483,6 +1849,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetPixelShader(struct nfsu2_
 
     a1 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a1); /* IDirect3DPixelShader9 * */
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[107])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetPixelShader", result);
     return result;
 }
 
@@ -1497,6 +1866,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetPixelShader(struct nfsu2_
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DPixelShader9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetPixelShader", result);
     return result;
 }
 
@@ -1505,6 +1877,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetPixelShaderConstantF(stru
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[109])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetPixelShaderConstantF", result);
     return result;
 }
 
@@ -1513,6 +1888,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetPixelShaderConstantF(stru
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[110])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetPixelShaderConstantF", result);
     return result;
 }
 
@@ -1521,6 +1899,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetPixelShaderConstantI(stru
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[111])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetPixelShaderConstantI", result);
     return result;
 }
 
@@ -1529,6 +1910,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetPixelShaderConstantI(stru
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[112])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetPixelShaderConstantI", result);
     return result;
 }
 
@@ -1537,6 +1921,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_SetPixelShaderConstantB(stru
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[113])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::SetPixelShaderConstantB", result);
     return result;
 }
 
@@ -1545,6 +1932,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_GetPixelShaderConstantB(stru
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[114])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::GetPixelShaderConstantB", result);
     return result;
 }
 
@@ -1553,6 +1943,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_DrawRectPatch(struct nfsu2_d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[115])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::DrawRectPatch", result);
     return result;
 }
 
@@ -1561,6 +1954,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_DrawTriPatch(struct nfsu2_d3
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[116])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::DrawTriPatch", result);
     return result;
 }
 
@@ -1569,6 +1965,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_DeletePatch(struct nfsu2_d3d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[117])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::DeletePatch", result);
     return result;
 }
 
@@ -1583,6 +1982,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_CreateQuery(struct nfsu2_d3d
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DQuery9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::CreateQuery", result);
     return result;
 }
 
@@ -1721,6 +2123,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DIndexBuffer9_GetDevice(struct nfsu2_
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DIndexBuffer9::GetDevice", result);
     return result;
 }
 
@@ -1729,6 +2134,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DIndexBuffer9_SetPrivateData(struct n
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[4])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DIndexBuffer9::SetPrivateData", result);
     return result;
 }
 
@@ -1737,6 +2145,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DIndexBuffer9_GetPrivateData(struct n
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[5])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DIndexBuffer9::GetPrivateData", result);
     return result;
 }
 
@@ -1745,6 +2156,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DIndexBuffer9_FreePrivateData(struct 
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[6])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DIndexBuffer9::FreePrivateData", result);
     return result;
 }
 
@@ -1785,6 +2199,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DIndexBuffer9_Lock(struct nfsu2_d3d9_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[11])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DIndexBuffer9::Lock", result);
     return result;
 }
 
@@ -1793,6 +2210,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DIndexBuffer9_Unlock(struct nfsu2_d3d
     unsigned result;
 
     result = ((unsigned (*)(void *))self->real_vtbl[12])(self->real);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DIndexBuffer9::Unlock", result);
     return result;
 }
 
@@ -1801,6 +2221,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DIndexBuffer9_GetDesc(struct nfsu2_d3
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[13])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DIndexBuffer9::GetDesc", result);
     return result;
 }
 
@@ -1834,6 +2257,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DPixelShader9_GetDevice(struct nfsu2_
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DPixelShader9::GetDevice", result);
     return result;
 }
 
@@ -1842,6 +2268,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DPixelShader9_GetFunction(struct nfsu
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[4])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DPixelShader9::GetFunction", result);
     return result;
 }
 
@@ -1866,6 +2295,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DQuery9_GetDevice(struct nfsu2_d3d9_b
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DQuery9::GetDevice", result);
     return result;
 }
 
@@ -1890,6 +2322,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DQuery9_Issue(struct nfsu2_d3d9_bridg
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[6])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DQuery9::Issue", result);
     return result;
 }
 
@@ -1898,6 +2333,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DQuery9_GetData(struct nfsu2_d3d9_bri
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[7])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DQuery9::GetData", result);
     return result;
 }
 
@@ -1925,6 +2363,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DResource9_GetDevice(struct nfsu2_d3d
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DResource9::GetDevice", result);
     return result;
 }
 
@@ -1933,6 +2374,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DResource9_SetPrivateData(struct nfsu
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[4])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DResource9::SetPrivateData", result);
     return result;
 }
 
@@ -1941,6 +2385,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DResource9_GetPrivateData(struct nfsu
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[5])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DResource9::GetPrivateData", result);
     return result;
 }
 
@@ -1949,6 +2396,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DResource9_FreePrivateData(struct nfs
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[6])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DResource9::FreePrivateData", result);
     return result;
 }
 
@@ -2011,6 +2461,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DStateBlock9_GetDevice(struct nfsu2_d
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DStateBlock9::GetDevice", result);
     return result;
 }
 
@@ -2019,6 +2472,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DStateBlock9_Capture(struct nfsu2_d3d
     unsigned result;
 
     result = ((unsigned (*)(void *))self->real_vtbl[4])(self->real);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DStateBlock9::Capture", result);
     return result;
 }
 
@@ -2027,6 +2483,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DStateBlock9_Apply(struct nfsu2_d3d9_
     unsigned result;
 
     result = ((unsigned (*)(void *))self->real_vtbl[5])(self->real);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DStateBlock9::Apply", result);
     return result;
 }
 
@@ -2052,6 +2511,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSurface9_GetDevice(struct nfsu2_d3d9
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSurface9::GetDevice", result);
     return result;
 }
 
@@ -2060,6 +2522,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSurface9_SetPrivateData(struct nfsu2
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[4])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSurface9::SetPrivateData", result);
     return result;
 }
 
@@ -2068,6 +2533,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSurface9_GetPrivateData(struct nfsu2
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[5])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSurface9::GetPrivateData", result);
     return result;
 }
 
@@ -2076,6 +2544,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSurface9_FreePrivateData(struct nfsu
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[6])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSurface9::FreePrivateData", result);
     return result;
 }
 
@@ -2116,6 +2587,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSurface9_GetContainer(struct nfsu2_d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[11])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSurface9::GetContainer", result);
     return result;
 }
 
@@ -2124,6 +2598,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSurface9_GetDesc(struct nfsu2_d3d9_b
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[12])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSurface9::GetDesc", result);
     return result;
 }
 
@@ -2132,6 +2609,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSurface9_LockRect(struct nfsu2_d3d9_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[13])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSurface9::LockRect", result);
     return result;
 }
 
@@ -2140,6 +2620,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSurface9_UnlockRect(struct nfsu2_d3d
     unsigned result;
 
     result = ((unsigned (*)(void *))self->real_vtbl[14])(self->real);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSurface9::UnlockRect", result);
     return result;
 }
 
@@ -2148,6 +2631,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSurface9_GetDC(struct nfsu2_d3d9_bri
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[15])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSurface9::GetDC", result);
     return result;
 }
 
@@ -2156,6 +2642,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSurface9_ReleaseDC(struct nfsu2_d3d9
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[16])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSurface9::ReleaseDC", result);
     return result;
 }
 
@@ -2186,6 +2675,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSwapChain9_Present(struct nfsu2_d3d9
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[3])(self->real, a1, a2, a3, a4, a5);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSwapChain9::Present", result);
     return result;
 }
 
@@ -2195,6 +2687,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSwapChain9_GetFrontBufferData(struct
 
     a1 = (unsigned)(uintptr_t)nfsu2_d3d9_unwrap((void *)(uintptr_t)a1); /* IDirect3DSurface9 * */
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[4])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSwapChain9::GetFrontBufferData", result);
     return result;
 }
 
@@ -2209,6 +2704,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSwapChain9_GetBackBuffer(struct nfsu
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DSurface9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSwapChain9::GetBackBuffer", result);
     return result;
 }
 
@@ -2217,6 +2715,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSwapChain9_GetRasterStatus(struct nf
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[6])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSwapChain9::GetRasterStatus", result);
     return result;
 }
 
@@ -2225,6 +2726,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSwapChain9_GetDisplayMode(struct nfs
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[7])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSwapChain9::GetDisplayMode", result);
     return result;
 }
 
@@ -2239,6 +2743,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSwapChain9_GetDevice(struct nfsu2_d3
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSwapChain9::GetDevice", result);
     return result;
 }
 
@@ -2247,6 +2754,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DSwapChain9_GetPresentParameters(stru
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[9])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DSwapChain9::GetPresentParameters", result);
     return result;
 }
 
@@ -2276,6 +2786,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DTexture9_GetDevice(struct nfsu2_d3d9
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DTexture9::GetDevice", result);
     return result;
 }
 
@@ -2284,6 +2797,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DTexture9_SetPrivateData(struct nfsu2
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[4])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DTexture9::SetPrivateData", result);
     return result;
 }
 
@@ -2292,6 +2808,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DTexture9_GetPrivateData(struct nfsu2
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[5])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DTexture9::GetPrivateData", result);
     return result;
 }
 
@@ -2300,6 +2819,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DTexture9_FreePrivateData(struct nfsu
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[6])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DTexture9::FreePrivateData", result);
     return result;
 }
 
@@ -2364,6 +2886,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DTexture9_SetAutoGenFilterType(struct
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[14])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DTexture9::SetAutoGenFilterType", result);
     return result;
 }
 
@@ -2388,6 +2913,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DTexture9_GetLevelDesc(struct nfsu2_d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[17])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DTexture9::GetLevelDesc", result);
     return result;
 }
 
@@ -2402,6 +2930,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DTexture9_GetSurfaceLevel(struct nfsu
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DSurface9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DTexture9::GetSurfaceLevel", result);
     return result;
 }
 
@@ -2410,6 +2941,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DTexture9_LockRect(struct nfsu2_d3d9_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[19])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DTexture9::LockRect", result);
     return result;
 }
 
@@ -2418,6 +2952,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DTexture9_UnlockRect(struct nfsu2_d3d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[20])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DTexture9::UnlockRect", result);
     return result;
 }
 
@@ -2426,6 +2963,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DTexture9_AddDirtyRect(struct nfsu2_d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[21])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DTexture9::AddDirtyRect", result);
     return result;
 }
 
@@ -2467,6 +3007,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVertexBuffer9_GetDevice(struct nfsu2
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVertexBuffer9::GetDevice", result);
     return result;
 }
 
@@ -2475,6 +3018,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVertexBuffer9_SetPrivateData(struct 
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[4])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVertexBuffer9::SetPrivateData", result);
     return result;
 }
 
@@ -2483,6 +3029,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVertexBuffer9_GetPrivateData(struct 
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[5])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVertexBuffer9::GetPrivateData", result);
     return result;
 }
 
@@ -2491,6 +3040,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVertexBuffer9_FreePrivateData(struct
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[6])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVertexBuffer9::FreePrivateData", result);
     return result;
 }
 
@@ -2531,6 +3083,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVertexBuffer9_Lock(struct nfsu2_d3d9
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[11])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVertexBuffer9::Lock", result);
     return result;
 }
 
@@ -2539,6 +3094,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVertexBuffer9_Unlock(struct nfsu2_d3
     unsigned result;
 
     result = ((unsigned (*)(void *))self->real_vtbl[12])(self->real);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVertexBuffer9::Unlock", result);
     return result;
 }
 
@@ -2547,6 +3105,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVertexBuffer9_GetDesc(struct nfsu2_d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[13])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVertexBuffer9::GetDesc", result);
     return result;
 }
 
@@ -2580,6 +3141,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVertexDeclaration9_GetDevice(struct 
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVertexDeclaration9::GetDevice", result);
     return result;
 }
 
@@ -2588,6 +3152,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVertexDeclaration9_GetDeclaration(st
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[4])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVertexDeclaration9::GetDeclaration", result);
     return result;
 }
 
@@ -2612,6 +3179,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVertexShader9_GetDevice(struct nfsu2
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVertexShader9::GetDevice", result);
     return result;
 }
 
@@ -2620,6 +3190,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVertexShader9_GetFunction(struct nfs
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[4])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVertexShader9::GetFunction", result);
     return result;
 }
 
@@ -2644,6 +3217,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolume9_GetDevice(struct nfsu2_d3d9_
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolume9::GetDevice", result);
     return result;
 }
 
@@ -2652,6 +3228,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolume9_SetPrivateData(struct nfsu2_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[4])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolume9::SetPrivateData", result);
     return result;
 }
 
@@ -2660,6 +3239,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolume9_GetPrivateData(struct nfsu2_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[5])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolume9::GetPrivateData", result);
     return result;
 }
 
@@ -2668,6 +3250,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolume9_FreePrivateData(struct nfsu2
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[6])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolume9::FreePrivateData", result);
     return result;
 }
 
@@ -2676,6 +3261,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolume9_GetContainer(struct nfsu2_d3
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[7])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolume9::GetContainer", result);
     return result;
 }
 
@@ -2684,6 +3272,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolume9_GetDesc(struct nfsu2_d3d9_br
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[8])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolume9::GetDesc", result);
     return result;
 }
 
@@ -2692,6 +3283,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolume9_LockBox(struct nfsu2_d3d9_br
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[9])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolume9::LockBox", result);
     return result;
 }
 
@@ -2700,6 +3294,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolume9_UnlockBox(struct nfsu2_d3d9_
     unsigned result;
 
     result = ((unsigned (*)(void *))self->real_vtbl[10])(self->real);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolume9::UnlockBox", result);
     return result;
 }
 
@@ -2730,6 +3327,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolumeTexture9_GetDevice(struct nfsu
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DDevice9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolumeTexture9::GetDevice", result);
     return result;
 }
 
@@ -2738,6 +3338,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolumeTexture9_SetPrivateData(struct
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[4])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolumeTexture9::SetPrivateData", result);
     return result;
 }
 
@@ -2746,6 +3349,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolumeTexture9_GetPrivateData(struct
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned))self->real_vtbl[5])(self->real, a1, a2, a3);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolumeTexture9::GetPrivateData", result);
     return result;
 }
 
@@ -2754,6 +3360,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolumeTexture9_FreePrivateData(struc
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[6])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolumeTexture9::FreePrivateData", result);
     return result;
 }
 
@@ -2818,6 +3427,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolumeTexture9_SetAutoGenFilterType(
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[14])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolumeTexture9::SetAutoGenFilterType", result);
     return result;
 }
 
@@ -2842,6 +3454,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolumeTexture9_GetLevelDesc(struct n
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[17])(self->real, a1, a2);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolumeTexture9::GetLevelDesc", result);
     return result;
 }
 
@@ -2856,6 +3471,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolumeTexture9_GetVolumeLevel(struct
 
         *out = nfsu2_d3d9_wrap(*out, NFSU2_D3D9_IFACE_IDirect3DVolume9);
     }
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolumeTexture9::GetVolumeLevel", result);
     return result;
 }
 
@@ -2864,6 +3482,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolumeTexture9_LockBox(struct nfsu2_
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[19])(self->real, a1, a2, a3, a4);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolumeTexture9::LockBox", result);
     return result;
 }
 
@@ -2872,6 +3493,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolumeTexture9_UnlockBox(struct nfsu
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[20])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolumeTexture9::UnlockBox", result);
     return result;
 }
 
@@ -2880,6 +3504,9 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVolumeTexture9_AddDirtyBox(struct nf
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[21])(self->real, a1);
+
+    if (result & 0x80000000u)
+        nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVolumeTexture9::AddDirtyBox", result);
     return result;
 }
 
