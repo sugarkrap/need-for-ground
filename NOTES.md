@@ -252,95 +252,36 @@ x87 register stack (MSVC's private convention for `__ftol`, with no C spelling),
 and Ghidra's field-slice syntax on a scalar (`_X._6_2_` for bytes 6..7 of a
 double).
 
-### Open: black window, correct rendering
+### Solved: the window that showed black
 
-The native hosts present a black window while rendering correctly. Recorded here
-because the evidence took a while to assemble and the intuitive diagnosis - "the
-renderer is broken" - is wrong:
+**A frame whose entire content is a `Clear` never reaches the screen under DXVK.**
+DXVK defers a Clear on a render target and materialises it when the image is next
+actually used; the swapchain blit does not trigger that, so it samples an uncleared
+(black) image, while `GetRenderTargetData` does trigger it and returns the cleared
+colour. That is the whole contradiction that drove days of investigation - "the GPU
+renders correctly and the window is black" - and the fix is to draw something. Both
+hosts now draw a quad, and the entire frame appears, clear included. No real game
+presents a Clear-only frame, so the port was never affected; only a test rig that
+did nothing but clear was. `--clear-only` reproduces it on demand.
 
-- reading the backbuffer back with `GetRenderTargetData` and writing it to a PNG
-  (`nfsu2-smoke-d3d9 --readback-png`) shows exactly the colour that was cleared,
-  so the GPU is doing what it was asked
-- `DXVK_HUD=fps` *is* visible in the window, so the swapchain is presented and
-  composited; the HUD and a black background appear in the same frame, which
-  means the backbuffer never reached the presented image
-- not present mode (IMMEDIATE and FIFO), not word size (32- and 64-bit identical),
-  not SDL's backend (wayland and x11), not a size mismatch (DXVK's swapchain
-  matches the request), and DXVK logs no warnings
+Ruled out along the way, in order, and all of it recorded in `native/README.md`:
+present mode, word size, SDL's video backend, window/backbuffer size mismatch,
+`BackBufferCount`, Vulkan API misuse (core, synchronisation and best-practices
+validation all clean), app-side ordering, swapchain image index handling, the
+present rects, and DXVK's backbuffer rotation.
 
-Also ruled out since: forcing DXVK's blit path by giving the backbuffer a
-different size from the window (DXVK can alias an exactly-matching image and skip
-the blit shader), and raising `D3DPRESENT_PARAMETERS.BackBufferCount`.
+Three lessons, each of which produced a confidently wrong report first:
 
-What *does* change the symptom is the Vulkan swapchain image count:
-`DXVK_CONFIG="dxvk.numBackBuffers = 3"` turns a permanently black window into one
-that shows content in roughly **one frame in ten** - measured by ten screen
-captures a quarter-second apart, one of which held the clear colour and one of
-which was partially drawn. So the presented images are real and only some of them
-contain our rendering, which points at swapchain image handling in DXVK Native
-rather than at the blit, and squarely away from this repo.
-
-It is not a fix and is not enabled by default - a flashing window is worse than a
-black one - but `--present-workaround` on either host turns it on for diagnosis.
-
-Environment: Wayland session, NVIDIA 610.43.03, DXVK Native 3.0.2, both -m32 and
--m64, vsync and immediate, SDL2's wayland and x11 backends.
-
-Traced further by instrumenting DXVK itself (probes in `UpdatePresentRegion`,
-`Presenter::acquireNextImage`/`presentImage` and
-`DxvkSwapchainBlitter::performDraw`). Per frame, everything a caller controls is
-correct: present rects are the full window (`dst=0,0 1000x600`), the image drawn
-into is exactly the image presented (`acquire index=4 image=X`, `performDraw
-dstImage=X`, `present index=4 image=X`), the source is the D3D9 backbuffer that
-readback proves holds our pixels, and `performDraw`'s degenerate-rect early-out
-never fires. So the blit draw is issued with correct inputs and produces nothing,
-while the HUD - drawn into the *same* attachment straight afterwards - appears.
-Both shader variants (`needsBlit` and not) behave identically.
-
-That puts it in the swapchain blit pipeline or its descriptor, and rules out
-everything on this side.
-
-The validation layers then ruled out the obvious cause too. Core validation,
-synchronisation validation and best-practices all run clean under
-`DXVK_DEBUG=validation` - no layout errors, no sync hazards - so DXVK's Vulkan
-usage is correct and the missing-barrier theory is dead. (Arch's
-`lib32-vulkan-validation-layers` ships only the library; the JSON manifest comes
-from the 64-bit package, and without it the loader silently cannot find the layer.
-A one-off manifest plus `VK_LAYER_PATH` works.) An app-side ordering problem is out
-as well: forcing a flush and wait before every Present, via a one-pixel readback
-(`--sync-each-frame`), leaves the window black.
-
-So: valid Vulkan, correct indices, correct rects, correct images, a draw that is
-issued, no sync hazard, and a HUD into the same attachment that *is* visible.
-
-**The swapchain read-back inside DXVK settled it** (patch and full write-up in
-`native/patches/dxvk-blit-probe.md`). The blitter's *source* image - the D3D9
-backbuffer - reads as **black** at blit time, while `GetRenderTargetData` on that
-same backbuffer returns the cleared colour. The buffer is pre-filled with 0xAB
-before the copy, so the zeroes are real data and not a probe looking in the wrong
-place; the HUD's 252 pixels land in the same destination image in the same render
-pass, which is exactly why the HUD is visible over a black window.
-
-That reframes the problem. The blit is not broken - it runs and faithfully writes
-the black it is handed. The application's rendering is simply not in the image the
-swapchain path reads. The next thread to pull is DXVK's D3D9 backbuffer rotation:
-`D3D9SwapChainEx` calls `Swap()` on the back buffers after each present, so which
-`VkImage` backs `m_backBuffers[0]` at blit time, versus which one the device's
-render target points at, is the thing to log. It also explains the one-frame-in-ten
-flicker with more swapchain images: occasionally the rotation lines up.
-
-Two mistakes the probe itself made first, both of which produced confident wrong
-answers and are worth remembering. It had no host-read barrier, so a perfectly
-valid copy read back as zeroes with validation clean - and that got reported as
-"the blit draw produced nothing". And it had no control: capturing the *source*
-image, which could not possibly be empty, is what exposed the probe as faulty. A
-measurement tool needs its own control before its output is worth anything.
-
-Two lessons worth keeping. A frame counter is not evidence that anything is on
-screen - the readback path exists so that claim can be checked. And "one capture
-showed the right colour" is not evidence that something is fixed: the first
-measurement of the numBackBuffers change looked like a fix and was actually a
-one-in-ten flicker, which only ten captures in a row revealed.
+1. A frame counter is not evidence that anything is on screen. "presented 240
+   frames" stood in for success across several commits while the window was black;
+   `--readback-png` writes the GPU's own output to a file so the claim is checkable.
+2. One capture is not evidence of a fix. `dxvk.numBackBuffers = 3` looked like a fix
+   from a single screenshot; ten captures a quarter-second apart showed a
+   one-in-ten flicker.
+3. A measurement tool needs its own control. The in-DXVK probe said "the presented
+   image is empty" while missing a host-read barrier, and that was reported as a
+   DXVK bug; capturing the source image - which could not possibly be empty - is
+   what exposed the probe. `native/patches/dxvk-blit-probe.md` has the detail.
 
 ## Widescreen/ultrawide FOV patch
 

@@ -21,6 +21,48 @@
 #include <stdlib.h>
 #include <string.h>
 
+/*
+ * Draw actual geometry, not just a Clear.
+ *
+ * This matters more than it looks: DXVK can defer a Clear on a render target and
+ * materialise it when the image is next used, and the swapchain blit appears not
+ * to trigger that - which is why a host whose whole frame is one Clear presented
+ * black while GetRenderTargetData (which does trigger it) showed the colour. No
+ * real game presents a frame that is only a Clear, so neither should the host.
+ *
+ * Fixed-function, pre-transformed vertices: no shaders, no vertex buffer, and it
+ * exercises SetFVF/SetRenderState/DrawPrimitiveUP - the same calls the game's own
+ * UI drawing uses (see DIRECTX_SCOPE.md).
+ */
+struct host_vertex {
+    float x, y, z, rhw;
+    D3DCOLOR colour;
+};
+
+static void draw_quad(IDirect3DDevice9 *device, int width, int height, D3DCOLOR colour)
+{
+    struct host_vertex quad[4];
+    float inset = 40.0f;
+
+    quad[0].x = inset;                quad[0].y = inset;
+    quad[1].x = (float)width - inset; quad[1].y = inset;
+    quad[2].x = inset;                quad[2].y = (float)height - inset;
+    quad[3].x = (float)width - inset; quad[3].y = (float)height - inset;
+
+    for (int i = 0; i < 4; i++) {
+        quad[i].z = 0.0f;
+        quad[i].rhw = 1.0f;
+        quad[i].colour = colour;
+    }
+
+    IDirect3DDevice9_SetRenderState(device, D3DRS_LIGHTING, FALSE);
+    IDirect3DDevice9_SetRenderState(device, D3DRS_CULLMODE, D3DCULL_NONE);
+    IDirect3DDevice9_SetRenderState(device, D3DRS_ZENABLE, FALSE);
+    IDirect3DDevice9_SetTexture(device, 0, NULL);
+    IDirect3DDevice9_SetFVF(device, D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+    IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLESTRIP, 2, quad, sizeof(quad[0]));
+}
+
 static int parse_int(const char *s, int fallback)
 {
     char *end;
@@ -49,6 +91,7 @@ int main(int argc, char **argv)
      * swapchain blit - not a missing barrier, which validation has now ruled out.
      */
     int sync_each_frame = 0;
+    int clear_only = 0;
     int i;
     SDL_Window *window;
     IDirect3D9 *d3d = NULL;
@@ -78,6 +121,8 @@ int main(int argc, char **argv)
             present_workaround = 1;
         else if (!strcmp(argv[i], "--sync-each-frame"))
             sync_each_frame = 1;
+        else if (!strcmp(argv[i], "--clear-only"))
+            clear_only = 1;
         else if (!strcmp(argv[i], "--backbuffer") && i + 2 < argc) {
             backbuffer_width = parse_int(argv[++i], 0);
             backbuffer_height = parse_int(argv[++i], 0);
@@ -217,6 +262,8 @@ int main(int argc, char **argv)
                                D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL,
                                colour, 1.0f, 0);
         IDirect3DDevice9_BeginScene(device);
+        if (!clear_only)
+            draw_quad(device, width, height, D3DCOLOR_XRGB(255, 255, 0));
         IDirect3DDevice9_EndScene(device);
         if (sync_each_frame) {
             unsigned char probe[4];

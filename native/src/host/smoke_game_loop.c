@@ -99,6 +99,53 @@ static LRESULT WINAPI window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
     }
 }
 
+/*
+ * Draw real geometry, not just a Clear - and this is the reason the window was
+ * black for most of this branch's history.
+ *
+ * DXVK defers a Clear on a render target and materialises it when the image is
+ * next actually used. A frame whose entire content is one Clear never triggers
+ * that in the swapchain path, so the blit samples an uncleared (black) image,
+ * while GetRenderTargetData - which does trigger it - returns the colour. Hence
+ * "the GPU rendered correctly but the window is black". Adding any real draw makes
+ * the whole frame appear, clear included.
+ *
+ * No real game presents a frame that is only a Clear, so this never affected the
+ * port - but it cost a lot of investigation, and a host that does not draw is a
+ * bad test rig. Fixed-function with pre-transformed vertices: no shaders, no
+ * vertex buffer, and it exercises SetFVF/SetRenderState/DrawPrimitiveUP, the same
+ * calls the game's own UI drawing uses (see DIRECTX_SCOPE.md).
+ */
+struct host_vertex {
+    float x, y, z, rhw;
+    D3DCOLOR colour;
+};
+
+static void draw_quad(IDirect3DDevice9 *device, int width, int height, D3DCOLOR colour)
+{
+    struct host_vertex quad[4];
+    float inset = 48.0f;
+    int i;
+
+    quad[0].x = inset;                quad[0].y = inset;
+    quad[1].x = (float)width - inset; quad[1].y = inset;
+    quad[2].x = inset;                quad[2].y = (float)height - inset;
+    quad[3].x = (float)width - inset; quad[3].y = (float)height - inset;
+
+    for (i = 0; i < 4; i++) {
+        quad[i].z = 0.0f;
+        quad[i].rhw = 1.0f;
+        quad[i].colour = colour;
+    }
+
+    IDirect3DDevice9_SetRenderState(device, D3DRS_LIGHTING, FALSE);
+    IDirect3DDevice9_SetRenderState(device, D3DRS_CULLMODE, D3DCULL_NONE);
+    IDirect3DDevice9_SetRenderState(device, D3DRS_ZENABLE, FALSE);
+    IDirect3DDevice9_SetTexture(device, 0, NULL);
+    IDirect3DDevice9_SetFVF(device, D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+    IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLESTRIP, 2, quad, sizeof(quad[0]));
+}
+
 static int parse_int(const char *s, int fallback)
 {
     char *end;
@@ -313,6 +360,11 @@ int main(int argc, char **argv)
                                                  (int)(195.0f - 155.0f * phase)),
                                    1.0f, 0);
             IDirect3DDevice9_BeginScene(g_device);
+            /* Counter-phase to the clear, so both are obviously live. */
+            draw_quad(g_device, (int)g_present.BackBufferWidth,
+                      (int)g_present.BackBufferHeight,
+                      D3DCOLOR_XRGB((int)(255.0f - 195.0f * phase), 220,
+                                    (int)(40.0f + 155.0f * phase)));
             IDirect3DDevice9_EndScene(g_device);
             if (FAILED(IDirect3DDevice9_Present(g_device, NULL, NULL, NULL, NULL)))
                 break;
