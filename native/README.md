@@ -586,17 +586,57 @@ have been chasing downstream effects. What is worth recording about that run ins
   real bug to fix on its own merits, and it may or may not share a cause with the
   corruption.
 
-The next step is a memory sanitiser rather than another read of a disassembly:
-build the shim at `-m32` with `-fsanitize=address` and let the redzones name the
-writer. The game's own writes into its mapped image are invisible to ASan, but a
-write past the end of a block *we* handed it is exactly what it is for. The
-alternative, and cheaper first move, is `MALLOC_CHECK_=3` to abort at the corrupting
-operation rather than at the next unrelated one.
+#### What the hunt for it has established
 
-What is *not* suspect, having been checked: `HeapSize` returns
-`malloc_usable_size`, which is genuinely usable space, so a caller writing that much
-cannot corrupt anything; and `HeapReAlloc` takes its old size from the same place
-rather than guessing.
+Three things were tried. None found the writer, and each ruled something out or
+turned up something worth knowing.
+
+**AddressSanitizer is not usable here as-is.** A `-m32` ASan build works
+(`meson setup build32-asan --cross-file cross/linux32.txt -Db_sanitize=address`, with
+`ASAN_OPTIONS=handle_segv=0` so our own SEH keeps the fault handler), but the game
+then fails *earlier* - before it creates a single D3D9 object - with no ASan report at
+all. Replacing the allocator changes the program's behaviour rather than observing
+it, so the corruption never happens in the same place.
+
+**Padding every HeapAlloc by 32 bytes made it fail earlier and consistently.** That
+is not a null result: it can only happen if the game *uses* the inflated size, and it
+gets one because `HeapSize` answers `malloc_usable_size`. Windows returns what was
+asked for. So this game is squarely in the group the comment in `heap.c` warned
+about - "anything that round-trips it as an element count".
+
+**Tracking the requested size in a block header made it worse still**, and for a
+second, separate reason: `GlobalAlloc` handed out plain `malloc` pointers, so a
+`GlobalFree` of a `HeapAlloc` block called `free()` on an interior pointer.
+On Windows both come from the process heap and code from 2004 crosses them freely.
+Any header scheme has to cover every family at once, and moving the pointer also
+moves whatever alignment the game was getting by accident.
+
+That points at the right design, which is the next thing to build: **keep the pointer
+exactly where glibc put it.** Record `(pointer -> requested size)` in a *side* table
+at `HeapAlloc`, fill the difference between the requested size and
+`malloc_usable_size` with a pattern, and check that pattern at `HeapFree` and
+`HeapReAlloc`. Nothing moves, so there is no alignment or interior-pointer hazard; a
+small overflow is caught at the block that suffered it, with its size and the API
+that allocated it; and `HeapSize` can answer the requested size, which is what
+Windows does and is a correctness fix regardless of the corruption.
+
+#### Two traps to know about before measuring anything here
+
+**The game persists state that changes its startup path.** It writes
+`NotFirstTime`, `SwapSize` and `Language` into `registry.ini` once it gets far
+enough, and subsequent runs then take a different path. Any before/after comparison
+has to re-import a clean store first:
+
+```sh
+deno run -A tools/import_wine_registry.ts --prefix /mnt/games/NFSU2/pfx \
+    --out "<game dir>/registry.ini"
+```
+
+**And the failure point moves between runs on its own.** With identical code and a
+clean registry, consecutive runs have stopped in the relocation loop, inside
+`ld.so`'s thread-TLS allocation, and at `malloc()`'s own corruption check - and how
+far the game gets (519 wrapped D3D9 objects, or none at all) varies with it. One run
+proves nothing here; a change has to be judged over several.
 
 ## Known gaps, in rough priority order
 
