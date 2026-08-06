@@ -204,6 +204,7 @@ libnfsu2_loader = static_library('nfsu2_loader',
 # 32-bit only: ghidra_types.h refuses to compile at 64-bit rather than
 # miscompile ILP32 pseudocode, so the target must not even be attempted there.
 game_generated = 'game/generated'
+game_ready = false
 if target_bits == 32 and fs.is_file(meson.current_source_dir() / game_generated / 'game_functions.h')
   game_sources = run_command('sh', '-c',
     'ls ' + meson.current_source_dir() / game_generated + '/*.c 2>/dev/null || true',
@@ -212,6 +213,9 @@ if target_bits == 32 and fs.is_file(meson.current_source_dir() / game_generated 
   if game_sources.length() > 0 and game_sources[0] != ''
     message('imported game functions: @0@'.format(game_sources.length()))
     game_inc = include_directories(game_generated)
+    # Checked by the game_render host further down, which needs DXVK as well and
+    # therefore cannot be defined until after DXVK has been looked for.
+    game_ready = true
 
     # Warnings are relaxed here and only here: this is decompiler output, not
     # code we wrote, and reformatting it to satisfy -Wparentheses would mean
@@ -281,6 +285,24 @@ if dxvk_d3d9.found() and sdl2.found()
     build_rpath : dxvk_lib_dir,
     export_dynamic : true,
     install : false)
+  # The game's own renderer code, on a real device: ported functions and original
+  # machine code both driving DXVK, the latter through a __stdcall shim. Needs the
+  # generated sources *and* DXVK, so it lives here rather than with the other
+  # game-function targets.
+  if game_ready
+    executable('nfsu2-game-render',
+      'src/host/game_render.c',
+      link_with : [libnfsu2_game, libnfsu2_loader],
+      # dinput8 rather than user32: it carries ddraw too, and this host is meant to
+      # resolve everything the platform layer can - which leaves DSOUND as the only
+      # unresolved import in the whole exe.
+      dependencies : [nfsu2_dinput8_dep, dxvk_d3d9],
+      include_directories : [nfsu2_inc, wine_inc, game_inc],
+      c_args : ['-D_GNU_SOURCE'],
+      build_rpath : dxvk_lib_dir,
+      export_dynamic : true,
+      install : false)
+  endif
 else
   if not dxvk_d3d9.found()
     message('libdxvk_d3d9 not found in @0@ - skipping the D3D9 smoke test.'.format(dxvk_lib_dir))

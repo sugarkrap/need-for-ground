@@ -628,6 +628,27 @@ const main = (): number => {
     );
   }
 
+  /*
+   * Remove generated files whose manifest entry has gone. Without this the tree
+   * keeps compiling code for a function that was *excluded* - meson globs whatever
+   * .c files are here - so a function withdrawn because its decompilation is
+   * wrong would quietly stay in the build. Found exactly that way: __SEH_prolog
+   * was still being compiled two commits after it was excluded.
+   */
+  const expected = new Set(functions.map((entry) => `${entry.symbol}.c`));
+  const stale: string[] = [];
+  for (const item of Deno.readDirSync(OUT_DIR)) {
+    if (item.isFile && item.name.endsWith(".c") && !expected.has(item.name)) {
+      Deno.removeSync(`${OUT_DIR}/${item.name}`);
+      stale.push(item.name);
+    }
+  }
+  if (stale.length > 0) {
+    console.log(`\nremoved ${stale.length} file(s) with no manifest entry:`);
+    for (const name of stale) console.log(`  ${name}`);
+    console.log("Re-run meson setup --reconfigure: the source list is a configure-time glob.");
+  }
+
   writeFunctionsHeader(declarations);
   const originalCount = writeOriginalsHeader(declarations);
 

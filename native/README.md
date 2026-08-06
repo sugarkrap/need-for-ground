@@ -634,6 +634,43 @@ Differential testing against the original machine code is not belt-and-braces he
 it is the only thing that catches this, and it caught it on the second function
 anyone tried.
 
+#### Game code on a real device
+
+The fake device proves the port is faithful; it does not prove the call survives
+contact with a driver. `nfsu2-game-render` does that, in a window, on the GPU:
+
+```
+$ ./build32/nfsu2-game-render --exe /path/to/speed2.exe --frames 600
+mapped     : .../speed2.exe
+             unresolved: DSOUND.dll!#1 (ordinal)
+imports    : 250 of 251 resolved (21 by ordinal)
+
+# the game's own renderer code, on a real device
+ok - SetRenderState is vtable offset 0xe4, the offset the original calls
+ok - the PORTED FUN_005b7a30 returned 1
+ok - and DXVK now reports ZWRITEENABLE=0 - the game's code reached the driver
+ok - with its globals written in the mapped image (0x00002000, 0x00002001)
+ok - the ORIGINAL machine code called our __stdcall shim 1 time(s)
+ok - and DXVK reports ZWRITEENABLE=0 again - original code drove Vulkan
+ok - the original returned 1, as the ported copy did
+```
+
+`GetRenderState` is what makes those checks worth anything: the state is read back
+*out of DXVK* rather than out of a recording thunk, so the assertion is that the
+driver agrees, not that the call was made.
+
+The original machine code cannot be handed DXVK's device pointer - it pushes
+arguments a `__cdecl` callee never removes, and the stack would drift 12 bytes per
+call. It gets a shim object: our own vtable of `__stdcall` thunks forwarding to the
+real device. That is what a partially-ported binary needs in front of *every*
+interface it still reaches from original code, and this is the smallest working
+instance of it. One method is filled in; the rest are NULL, so the first call to an
+unshimmed method is a crash rather than a silent wrong answer.
+
+Also worth the line it costs: with DXVK and the SDL-backed dinput8/ddraw both
+linked, **the only unresolved import left in the whole exe is `DSOUND.dll!#1`** -
+audio, the one genuine platform gap.
+
 ### What comes next
 
 1. Widen the manifest into the renderer scope, one function at a time rather than
