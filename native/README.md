@@ -296,6 +296,80 @@ capture and was actually a flicker - ten captures a quarter-second apart showed 
    be empty - is what exposed the probe as faulty. See
    `patches/dxvk-blit-probe.md`.
 
+## Launching the game
+
+`nfsu2-game-launch` maps the exe, resolves its imports onto the shim, gives the
+thread a TEB and the process a fault handler, and jumps to `AddressOfEntryPoint`.
+There is nothing left to build before trying that, and trying it is the only way to
+find out what the game needs next *in the order it needs it*.
+
+```
+$ NFSU2_SHIM_TRACE=1 ./build32/nfsu2-game-launch --exe /path/to/speed2.exe
+mapped     : base 0x400000, 5312 KiB, entry 0x75b8d1
+imports    : 249 of 251 resolved (21 by ordinal)
+
+--- entering the game at 0x0075b8d1 ---
+
+[nfsu2/shim] registry: no store at ./registry.ini (starting empty)
+[nfsu2/shim] RegOpenKey: HKEY_LOCAL_MACHINE\Software\Microsoft\Direct3D not found
+[nfsu2/shim] HANDLE alloc 0x57821040 kind=8 size=137232       <- toolhelp snapshot
+[nfsu2/shim] HANDLE free 0x57821040 kind=8
+[nfsu2/shim] DuplicateHandle(current thread): returning the pseudo-handle itself
+[nfsu2/shim] HANDLE alloc 0x577e5f40 kind=5 size=108          <- a thread
+[nfsu2/shim] RegOpenKey: ...\Need for Speed Underground 2\ergc not found
+[nfsu2/shim] HANDLE alloc 0x577f0750 kind=3 size=92           <- events
+[MessageBox] NFS Underground 2: Please insert Disc 2
+```
+
+**The game's own startup runs.** CRT initialisation, its anti-debug process scan,
+its registry lookups, its threads and events - and it stops at its own disc check,
+which is the game telling us what it wants rather than anything failing underneath
+it.
+
+Five bugs stood between the entry point and that dialog, and every one of them was
+invisible to the test suite:
+
+1. **The PE headers were not mapped.** An `HMODULE` *is* the image base on Windows,
+   and MSVC's CRT startup calls `GetModuleHandleA(NULL)` and then
+   `cmp WORD PTR [eax], 0x5a4d` looking for `MZ`. The loader now maps
+   `SizeOfHeaders` bytes at the base, and `GetModuleHandleA` returns the base
+   rather than an opaque handle (also for the exe's own name, which is as common).
+2. **`CloseHandle` trusted any pointer.** The game closes something that is not one
+   of our handles, whose first two words happen to read as
+   `{kind = FIND, refs = 1}` - arbitrary data is full of small integers. There is
+   now a table of the handles we issued, and only pointers in it get dereferenced;
+   anything else gets `ERROR_INVALID_HANDLE`, which is what Windows says.
+3. **Two object types shared a kind.** `toolhelp.c` tagged its process snapshot
+   `NFSU2_OBJ_FIND` because it had "the same lifetime shape and no separate
+   destructor needed". The kind selects the *destructor*, so closing a snapshot ran
+   the find destructor over it, read the process count as a `char *` and the first
+   pid as a `DIR *`, and called `closedir(1)`. It presented as a fault inside libc,
+   five frames from anything that explained it.
+4. **Pseudo-handles were not handled.** `DuplicateHandle(GetCurrentProcess(),
+   GetCurrentThread(), ...)` is the standard way to get a thread handle that
+   outlives the call, and `-2` was being dereferenced as an object.
+5. **`CREATE_SUSPENDED` was refused**, on the reasoning that "nothing in this game
+   creates suspended threads". It does, twice, before it has drawn anything. There
+   is now a real start gate and a suspend count, with `ResumeThread` returning the
+   previous count as callers expect.
+
+Two of those five were comments asserting the game would never do something. Both
+were wrong, and neither could have been contradicted by anything except running it.
+
+Threads the game creates now get their own TEB in the trampoline, since `%fs` and
+the TEB are both per-thread and the first `__try` on a worker would otherwise write
+through a stray segment.
+
+### What the disc check needs
+
+The dialog comes from the game's own code and loops because `MessageBoxA` answers
+`IDOK`, which it reads as "retry". `GetVolumeInformationA` is not in its import
+table, so the check is not a volume-label comparison; the string lives at
+`0x7a3c00`, and the next step is an xref query in Ghidra to find the function that
+decides. The registry keys it looked for and did not find - notably
+`...\Need for Speed Underground 2\ergc`, the registration entry a real install
+writes - are the other half of the answer, and `registry.ini` can carry them.
+
 ## Known gaps, in rough priority order
 
 1. **Audio.** `mss32.dll` (Miles Sound System) is not in the import list at all -

@@ -36,6 +36,7 @@
 #define OPT_IMAGE_BASE          0x1c
 #define OPT_SECTION_ALIGNMENT   0x20
 #define OPT_SIZE_OF_IMAGE       0x38
+#define OPT_SIZE_OF_HEADERS     0x3c
 #define SECTION_HEADER_SIZE     40
 #define SECTION_VIRTUAL_SIZE    0x08
 #define SECTION_VIRTUAL_ADDRESS 0x0c
@@ -81,6 +82,14 @@ static int fail(char *error, size_t size, int code, const char *fmt, ...)
     return code;
 }
 
+/*
+ * Tell the shim where the image landed, so GetModuleHandleA(NULL) can return the
+ * image base - which is what an HMODULE *is* on Windows, and what MSVC's CRT
+ * startup reads a DOS header out of. Weak, like nfsu2_winsock_lookup above, so a
+ * harness that maps a PE without linking the shim still builds.
+ */
+__attribute__((weak)) void nfsu2_module_set_image_base(void *base);
+
 int nfsu2_pe_load(const char *path, struct nfsu2_pe_image *out, char *error, size_t error_size)
 {
     unsigned char *file = NULL;
@@ -88,6 +97,7 @@ int nfsu2_pe_load(const char *path, struct nfsu2_pe_image *out, char *error, siz
     int fd;
     unsigned int pe_offset, section_table, image_base, image_size, page_size;
     unsigned int import_directory = 0;
+    unsigned int size_of_headers = 0;
     unsigned short section_count, optional_size;
     void *mapping;
     int i;
@@ -136,6 +146,7 @@ int nfsu2_pe_load(const char *path, struct nfsu2_pe_image *out, char *error, siz
         }
         image_base = read32(opt + OPT_IMAGE_BASE);
         image_size = read32(opt + OPT_SIZE_OF_IMAGE);
+        size_of_headers = read32(opt + OPT_SIZE_OF_HEADERS);
         out->entry_point = image_base + read32(opt + OPT_ENTRY_POINT);
         import_directory = read32(opt + OPT_DATA_DIRECTORY
           + DIRECTORY_ENTRY_IMPORT * 8);
@@ -165,6 +176,23 @@ int nfsu2_pe_load(const char *path, struct nfsu2_pe_image *out, char *error, siz
         munmap(mapping, image_size);
         munmap(file, (size_t)st.st_size);
         return fail(error, error_size, -ENOMEM, "0x%x is already occupied", image_base);
+    }
+
+    /*
+     * The headers, at the image base, exactly as Windows maps them - and this is
+     * not for completeness. An HMODULE *is* the image base there, so code that
+     * asks for its own module handle gets a pointer it can read a DOS header out
+     * of, and MSVC's CRT startup does precisely that: GetModuleHandleA(NULL) and
+     * then `cmp WORD PTR [eax], 0x5a4d` for 'MZ', followed by a walk to the PE
+     * header. Without the headers mapped it reads zeroes and takes an error path
+     * that goes nowhere good.
+     */
+    if (size_of_headers > 0 && (size_t)size_of_headers <= (size_t)st.st_size) {
+        size_t copy = size_of_headers;
+
+        if (copy > image_size)
+            copy = image_size;
+        memcpy(mapping, file, copy);
     }
 
     for (i = 0; i < section_count; i++) {
@@ -222,6 +250,8 @@ int nfsu2_pe_load(const char *path, struct nfsu2_pe_image *out, char *error, siz
     out->image_base = image_base;
     out->image_size = image_size;
     out->mapping = mapping;
+    if (nfsu2_module_set_image_base)
+        nfsu2_module_set_image_base(mapping);
     out->section_count = section_count;
     out->import_directory = import_directory;
     return 0;

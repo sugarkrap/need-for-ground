@@ -53,13 +53,34 @@ static const struct known_module g_known[] = {
     { "winmm",        MODULE_WINMM },
 };
 
+/*
+ * The running image's base, once something has mapped one (pe_loader.c calls in).
+ * On Windows an HMODULE is the base address of the mapped module, and code relies
+ * on that concretely: MSVC's CRT startup does GetModuleHandleA(NULL) and then
+ * `cmp WORD PTR [eax], 0x5a4d` to check for 'MZ' before walking to the PE header.
+ * Until an image is mapped there is nothing truthful to return, so the old opaque
+ * handle stays - it satisfies "did this succeed" without pretending to be memory.
+ */
+static HMODULE g_image_base;
+
+void nfsu2_module_set_image_base(void *base)
+{
+    g_image_base = (HMODULE)base;
+}
+
+static HMODULE self_handle(void)
+{
+    return g_image_base ? g_image_base : MODULE_SELF;
+}
+
 static HMODULE lookup_known(LPCSTR name)
 {
     size_t i;
     const char *base;
+    size_t length;
 
     if (!name)
-        return MODULE_SELF;
+        return self_handle();
 
     /* Accept a full path; only the basename identifies the DLL. */
     base = strrchr(name, '\\');
@@ -69,6 +90,14 @@ static HMODULE lookup_known(LPCSTR name)
         if (strcasecmp(base, g_known[i].win_name) == 0)
             return g_known[i].handle;
     }
+    /*
+     * The executable asking for itself by name, which is as common as asking with
+     * NULL - any .exe that is not one of the DLLs above can only be this one,
+     * since nothing else is loaded.
+     */
+    length = strlen(base);
+    if (length > 4 && strcasecmp(base + length - 4, ".exe") == 0)
+        return self_handle();
     return NULL;
 }
 

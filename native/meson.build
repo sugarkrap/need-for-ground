@@ -285,6 +285,19 @@ if dxvk_d3d9.found() and sdl2.found()
     build_rpath : dxvk_lib_dir,
     export_dynamic : true,
     install : false)
+  # Call the game's entry point. Needs no generated sources - it runs the original
+  # machine code, not ported copies - but it does need DXVK linked, because
+  # Direct3DCreate9 is one of the imports the CRT startup path eventually reaches.
+  executable('nfsu2-game-launch',
+    'src/host/game_launch.c',
+    link_with : [libnfsu2_loader],
+    dependencies : [nfsu2_dinput8_dep, dxvk_d3d9],
+    include_directories : [nfsu2_inc, wine_inc],
+    c_args : ['-D_GNU_SOURCE'],
+    build_rpath : dxvk_lib_dir,
+    export_dynamic : true,
+    install : false)
+
   # The game's own renderer code, on a real device: ported functions and original
   # machine code both driving DXVK, the latter through a __stdcall shim. Needs the
   # generated sources *and* DXVK, so it lives here rather than with the other

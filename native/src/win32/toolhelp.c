@@ -32,8 +32,19 @@ struct nfsu2_snapshot {
     } entries[MAX_SNAPSHOT_ENTRIES];
 };
 
-/* Snapshots use the FIND object kind: same lifetime shape (created, iterated,
- * closed with CloseHandle) and no separate destructor needed. */
+/*
+ * Its own object kind, and this is not bookkeeping. A snapshot has the same
+ * lifetime shape as a find handle - created, iterated, closed with CloseHandle -
+ * and needs nothing freed beyond itself, which is why it once shared FIND's kind.
+ * But the kind selects the *destructor*: with FIND, closing a snapshot ran
+ * nfsu2_find_destroy over this struct, read `count` as a `char *` and
+ * `entries[0].pid` as a `DIR *`, and called closedir(1). See shim_internal.h.
+ */
+void nfsu2_snapshot_destroy(struct nfsu2_object *obj)
+{
+    free(obj);
+}
+
 static void snapshot_fill(struct nfsu2_snapshot *snapshot)
 {
     DIR *proc = opendir("/proc");
@@ -97,7 +108,7 @@ HANDLE WINAPI CreateToolhelp32Snapshot(DWORD flags, DWORD pid)
         return INVALID_HANDLE_VALUE;
     }
 
-    snapshot = nfsu2_obj_alloc(NFSU2_OBJ_FIND, sizeof(*snapshot));
+    snapshot = nfsu2_obj_alloc(NFSU2_OBJ_SNAPSHOT, sizeof(*snapshot));
     if (!snapshot)
         return INVALID_HANDLE_VALUE;
 
@@ -125,7 +136,7 @@ static BOOL fill_entry(struct nfsu2_snapshot *snapshot, LPPROCESSENTRY32 entry)
 
 BOOL WINAPI Process32First(HANDLE handle, LPPROCESSENTRY32 entry)
 {
-    struct nfsu2_snapshot *snapshot = nfsu2_obj_get(handle, NFSU2_OBJ_FIND);
+    struct nfsu2_snapshot *snapshot = nfsu2_obj_get(handle, NFSU2_OBJ_SNAPSHOT);
 
     if (!snapshot || !entry)
         return FALSE;
@@ -139,7 +150,7 @@ BOOL WINAPI Process32First(HANDLE handle, LPPROCESSENTRY32 entry)
 
 BOOL WINAPI Process32Next(HANDLE handle, LPPROCESSENTRY32 entry)
 {
-    struct nfsu2_snapshot *snapshot = nfsu2_obj_get(handle, NFSU2_OBJ_FIND);
+    struct nfsu2_snapshot *snapshot = nfsu2_obj_get(handle, NFSU2_OBJ_SNAPSHOT);
 
     if (!snapshot || !entry)
         return FALSE;

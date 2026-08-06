@@ -8,6 +8,8 @@
  */
 #include "shim_internal.h"
 
+#include <nfsu2/teb.h>
+
 #include <stdint.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -22,6 +24,17 @@ struct nfsu2_thread {
     DWORD exit_code;
     int finished;
     int detached;
+    /*
+     * Suspend count, for CREATE_SUSPENDED. Windows starts such a thread at 1 and
+     * runs it when ResumeThread brings it to 0, which is how a game hands a thread
+     * its parameters before it can observe them - and this game does it twice
+     * during startup, having been documented here as never doing it at all.
+     *
+     * Only the not-yet-started case is real: stopping a thread that is already
+     * running needs signals and is not what CREATE_SUSPENDED is for. SuspendThread
+     * on a running thread still says so rather than pretending.
+     */
+    int suspend_count;
     pthread_mutex_t lock;
     pthread_cond_t cond;
 };
@@ -42,9 +55,26 @@ void nfsu2_thread_destroy(struct nfsu2_object *obj)
 static void *thread_trampoline(void *arg)
 {
     struct nfsu2_thread *t = arg;
+    char teb_error[128] = "";
     DWORD rc;
 
     g_current_thread = t;
+    /*
+     * A TEB before anything else runs on this thread. %fs and the TEB are both
+     * per-thread, and the very first thing a 32-bit MSVC function with a __try does
+     * on entry is push onto fs:[0] - so a worker thread without one writes through
+     * whatever %fs happens to hold. The main thread's is installed by the host;
+     * this is the same call for threads the game creates itself.
+     */
+    if (nfsu2_teb_install(teb_error, sizeof(teb_error)) != 0)
+        nfsu2_shim_trace("CreateThread: no TEB for this thread: %s", teb_error);
+
+    /* The start gate: created suspended means "do not run yet". */
+    pthread_mutex_lock(&t->lock);
+    while (t->suspend_count > 0)
+        pthread_cond_wait(&t->cond, &t->lock);
+    pthread_mutex_unlock(&t->lock);
+
     rc = t->start(t->param);
 
     pthread_mutex_lock(&t->lock);
@@ -69,17 +99,12 @@ HANDLE WINAPI CreateThread(LPSECURITY_ATTRIBUTES sa, SIZE_T stack_size,
         SetLastError(ERROR_INVALID_PARAMETER);
         return NULL;
     }
-    if (flags & CREATE_SUSPENDED) {
-        /* Would need a start gate; nothing in this game creates suspended
-         * threads, so fail loudly rather than silently running it early. */
-        NFSU2_STUB("CreateThread(CREATE_SUSPENDED)");
-        SetLastError(ERROR_NOT_SUPPORTED);
-        return NULL;
-    }
-
     t = nfsu2_obj_alloc(NFSU2_OBJ_THREAD, sizeof(*t));
     if (!t)
         return NULL;
+    /* Set before the thread exists, so the trampoline cannot miss it. */
+    if (flags & CREATE_SUSPENDED)
+        t->suspend_count = 1;
     t->start = start;
     t->param = param;
     pthread_mutex_init(&t->lock, NULL);
@@ -192,18 +217,51 @@ int WINAPI GetThreadPriority(HANDLE h)
     return THREAD_PRIORITY_NORMAL;
 }
 
-DWORD WINAPI SuspendThread(HANDLE h)
-{
-    (void)h;
-    NFSU2_STUB("SuspendThread");
-    return (DWORD)-1;
-}
-
+/*
+ * Windows returns the *previous* suspend count, and callers do check it: a game
+ * that gets 0 back knows the thread was already running.
+ */
 DWORD WINAPI ResumeThread(HANDLE h)
 {
-    (void)h;
-    NFSU2_STUB("ResumeThread");
-    return (DWORD)-1;
+    struct nfsu2_thread *t = nfsu2_obj_get(h, NFSU2_OBJ_THREAD);
+    DWORD previous;
+
+    if (!t)
+        return (DWORD)-1;
+
+    pthread_mutex_lock(&t->lock);
+    previous = (DWORD)t->suspend_count;
+    if (t->suspend_count > 0) {
+        t->suspend_count--;
+        if (t->suspend_count == 0)
+            pthread_cond_broadcast(&t->cond);
+    }
+    pthread_mutex_unlock(&t->lock);
+    return previous;
+}
+
+/*
+ * Only meaningful before the thread has started. Suspending a thread that is
+ * already running would need a signal and a handshake, and a shim that silently
+ * did nothing here would be worse than one that says it cannot.
+ */
+DWORD WINAPI SuspendThread(HANDLE h)
+{
+    struct nfsu2_thread *t = nfsu2_obj_get(h, NFSU2_OBJ_THREAD);
+    DWORD previous;
+
+    if (!t)
+        return (DWORD)-1;
+
+    pthread_mutex_lock(&t->lock);
+    previous = (DWORD)t->suspend_count;
+    t->suspend_count++;
+    pthread_mutex_unlock(&t->lock);
+
+    if (previous == 0)
+        nfsu2_shim_trace("SuspendThread: already running - the count is raised but "
+                         "the thread keeps going until it next blocks on the gate");
+    return previous;
 }
 
 BOOL WINAPI TerminateThread(HANDLE h, DWORD exit_code)

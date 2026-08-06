@@ -8,7 +8,19 @@
 #include <errno.h>
 #include <stddef.h>
 
-/* Kinds of kernel object our HANDLEs can point at. */
+/*
+ * Kinds of kernel object our HANDLEs can point at.
+ *
+ * One rule, learned the hard way: **two object types must never share a kind.**
+ * The kind selects the destructor in nfsu2_obj_release, so sharing one means the
+ * wrong destructor runs over the wrong struct. toolhelp.c's process snapshot used
+ * to be tagged NFSU2_OBJ_FIND on the reasoning that it had "the same lifetime
+ * shape and no separate destructor needed" - and CloseHandle on a snapshot then
+ * ran the *find* destructor, which read the snapshot's process count as a `char *`
+ * and its first pid as a `DIR *` and called closedir(1). It surfaced as a fault
+ * inside libc during the game's startup, five frames from anything that explained
+ * it. A kind per type, always, even when the type needs no cleanup.
+ */
 enum nfsu2_obj_kind {
     NFSU2_OBJ_FILE = 1,
     NFSU2_OBJ_FIND,
@@ -16,7 +28,8 @@ enum nfsu2_obj_kind {
     NFSU2_OBJ_MUTEX,
     NFSU2_OBJ_THREAD,
     NFSU2_OBJ_HEAP,
-    NFSU2_OBJ_MAPPING
+    NFSU2_OBJ_MAPPING,
+    NFSU2_OBJ_SNAPSHOT
 };
 
 struct nfsu2_object {
@@ -26,6 +39,10 @@ struct nfsu2_object {
 
 /* Allocate a zeroed object of `size` bytes with its header filled in. */
 void *nfsu2_obj_alloc(enum nfsu2_obj_kind kind, size_t size);
+/* Was this pointer issued as a handle and not yet closed? The guard in front of
+ * every dereference of a HANDLE - see the table in core.c for why. */
+int nfsu2_obj_is_live(const void *p);
+
 /* Type-checked cast from a HANDLE; returns NULL and sets last error if wrong. */
 void *nfsu2_obj_get(HANDLE h, enum nfsu2_obj_kind kind);
 /* Drop a reference; calls the per-kind destructor at zero. */
@@ -36,6 +53,7 @@ void nfsu2_file_destroy(struct nfsu2_object *obj);
 void nfsu2_find_destroy(struct nfsu2_object *obj);
 void nfsu2_sync_destroy(struct nfsu2_object *obj);
 void nfsu2_thread_destroy(struct nfsu2_object *obj);
+void nfsu2_snapshot_destroy(struct nfsu2_object *obj);
 
 /* Thread-handle wait, dispatched from WaitForSingleObject (thread.c). */
 DWORD nfsu2_thread_wait(struct nfsu2_object *obj, DWORD timeout_ms);
