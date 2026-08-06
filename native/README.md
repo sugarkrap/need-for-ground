@@ -525,6 +525,50 @@ printing its own log line. It stops next in *input* initialisation, on
 what "EZ Wheel Wrapper" wants), then faults at `0x80000001` - an address that is
 plainly a returned status being called as a function pointer.
 
+### Every import resolved, and the audio gap made honest
+
+The fault at `0x80000001` was not an address at all. `DSOUND.dll!#1` was the last
+unresolved import, and an unresolved slot still holds what the file put there - for
+an ordinal import, `IMAGE_ORDINAL_FLAG | 1`. The game's own `jmp [0x78302c]` thunk
+jumped to it. Three fixes came out of that:
+
+- **`src/dsound/dsound.c`** answers `DirectSoundCreate` with `DSERR_NODRIVER`. Audio
+  is still not implemented; this is the truth about that, and it is an outcome every
+  Windows game had to handle - a machine with no sound card. **251 of 251 imports now
+  resolve.**
+- **Unresolved imports get a named stub.** The loader used to leave the slot as the
+  file had it, on the reasoning that a stub returning a plausible value turns "this
+  API is missing" into a crash somewhere else. That reasoning holds for *faking a
+  result* - and this does not fake one. Ten bytes of i386 put the stub's index in ECX
+  and jump to a reporter that names the import and stops. The failure stays exactly
+  as loud, and lands at the call.
+- **A thread's object outlives its handle.** `CloseHandle` on a running thread's
+  handle dropped the last reference and `nfsu2_thread_destroy` ran
+  `pthread_mutex_destroy` on the lock the trampoline was using, which glibc caught as
+  `assertion failed: mutex->__data.__owner == 0` from inside `pthread_cond_wait` -
+  with nothing pointing at a closed handle. The running thread now holds its own
+  reference and releases it as its last act. The suspend gate added earlier is what
+  made this reachable; the bug was always there.
+
+### Where it stops now
+
+The game gets through graphics, input and audio initialisation and faults in
+`FUN_005793c0`, which is an asset-relocation routine: it links an object into a list
+and then walks an array at `+0x20` in strides of 0x14, turning relative offsets into
+absolute pointers by adding the object's base. The loop count comes from the data
+(`param_1[3]`), so a wrong count walks off the end - which means the data is wrong,
+not the loop.
+
+Two leads, and they may be the same one:
+
+1. **It has opened no data files at all.** The only paths in the trace are `J:\` and
+   `J:\bin.dat`. So the table being relocated is statically initialised in the image
+   rather than loaded, and something that should have filled it did not.
+2. **`IDirect3DDevice9::BeginStateBlock` fails repeatedly** with `D3DERR_INVALIDCALL`
+   (`0x8876086c`). That is what DXVK returns when a state block is already recording,
+   so a missing or failed `EndStateBlock` would leave every later `Begin` failing -
+   and the game builds its render states through those.
+
 ## Known gaps, in rough priority order
 
 1. **Audio.** `mss32.dll` (Miles Sound System) is not in the import list at all -

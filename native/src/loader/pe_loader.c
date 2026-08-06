@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -278,6 +279,106 @@ __attribute__((weak)) void *nfsu2_winsock_lookup(const char *name, unsigned ordi
  */
 __attribute__((weak)) void *nfsu2_d3d9_lookup(const char *name);
 
+/* dsound.dll, imported by ordinal only - see dsound/dsound.c. */
+__attribute__((weak)) void *nfsu2_dsound_lookup(const char *name, unsigned int ordinal);
+
+/*
+ * A stub for an import we do not have, so that calling it says which one it was.
+ *
+ * The old behaviour was to leave the IAT slot exactly as the file had it and count
+ * it, on the reasoning that a stub returning a plausible value would turn "this API
+ * is missing" into a crash somewhere else. That reasoning still holds for *faking a
+ * result* - and this does not fake one. It is the same loud failure, moved to the
+ * call: the slot the file left behind is not an address, it is an encoded ordinal
+ * (IMAGE_ORDINAL_FLAG | n), and the game's thunk jumps straight to it. That is how
+ * DSOUND.dll!#1 presented as `0x80000001 in ?? ()` with no clue attached.
+ */
+#if defined(__i386__)
+
+#define MAX_STUBS    256
+#define STUB_STRIDE  16
+
+static struct {
+    char library[32];
+    char symbol[96];
+    unsigned int ordinal;
+} g_stub_info[MAX_STUBS];
+static unsigned char *g_stub_page;
+static int g_stub_count;
+
+static void __attribute__((fastcall, noreturn)) stub_called(unsigned int index)
+{
+    if (index < MAX_STUBS && g_stub_info[index].library[0]) {
+        if (g_stub_info[index].ordinal)
+            fprintf(stderr, "\n[nfsu2] the game called %s!#%u, which this port does not "
+                            "implement\n", g_stub_info[index].library,
+                    g_stub_info[index].ordinal);
+        else
+            fprintf(stderr, "\n[nfsu2] the game called %s!%s, which this port does not "
+                            "implement\n", g_stub_info[index].library,
+                    g_stub_info[index].symbol);
+    } else {
+        fprintf(stderr, "\n[nfsu2] the game called an unimplemented import (stub %u)\n",
+                index);
+    }
+    fprintf(stderr, "        Stopping here, at the call, rather than wherever a faked\n"
+                    "        return value would have led.\n");
+    abort();
+}
+
+/*
+ * Ten bytes of i386: put the stub's index in ECX, then jump to the reporter, which
+ * takes it in ECX (__fastcall). A `push` would not do - the reporter's argument has
+ * to sit above a return address, and there is no call here to make one.
+ *
+ *   b9 <index>   mov ecx, index
+ *   e9 <rel32>   jmp stub_called
+ */
+static void *make_stub(const char *library, const char *symbol, unsigned int ordinal)
+{
+    unsigned char *stub;
+    int index = g_stub_count;
+    long displacement;
+
+    if (index >= MAX_STUBS)
+        return NULL;
+    if (!g_stub_page) {
+        g_stub_page = mmap(NULL, MAX_STUBS * STUB_STRIDE,
+                           PROT_READ | PROT_WRITE | PROT_EXEC,
+                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (g_stub_page == MAP_FAILED) {
+            g_stub_page = NULL;
+            return NULL;
+        }
+    }
+
+    snprintf(g_stub_info[index].library, sizeof(g_stub_info[index].library), "%s",
+             library ? library : "?");
+    snprintf(g_stub_info[index].symbol, sizeof(g_stub_info[index].symbol), "%s",
+             symbol ? symbol : "");
+    g_stub_info[index].ordinal = ordinal;
+
+    stub = g_stub_page + (size_t)index * STUB_STRIDE;
+    stub[0] = 0xb9;
+    memcpy(stub + 1, &index, 4);
+    displacement = (long)((unsigned char *)stub_called - (stub + 10));
+    stub[5] = 0xe9;
+    memcpy(stub + 6, &displacement, 4);
+
+    g_stub_count++;
+    return stub;
+}
+
+#else /* !__i386__ */
+
+static void *make_stub(const char *library, const char *symbol, unsigned int ordinal)
+{
+    (void)library; (void)symbol; (void)ordinal;
+    return NULL; /* the 64-bit build never loads a PE; nothing can call these */
+}
+
+#endif
+
 static int library_is(const char *library, const char *name)
 {
     size_t i;
@@ -389,6 +490,8 @@ int nfsu2_pe_resolve_imports(struct nfsu2_pe_image *image, struct nfsu2_pe_impor
 
                 if (nfsu2_winsock_lookup && library_is(library, "ws2_32.dll"))
                     by_ordinal = nfsu2_winsock_lookup(NULL, ordinal);
+                if (!by_ordinal && nfsu2_dsound_lookup && library_is(library, "dsound.dll"))
+                    by_ordinal = nfsu2_dsound_lookup(NULL, ordinal);
 
                 if (by_ordinal) {
                     iat[index] = (unsigned int)(uintptr_t)by_ordinal;
@@ -396,6 +499,15 @@ int nfsu2_pe_resolve_imports(struct nfsu2_pe_image *image, struct nfsu2_pe_impor
                     continue;
                 }
 
+                /* Not available: a stub that names it when called, rather than the
+                 * encoded ordinal the file left in the slot - which the game would
+                 * jump to. */
+                {
+                    void *stub = make_stub(library, NULL, ordinal);
+
+                    if (stub)
+                        iat[index] = (unsigned int)(uintptr_t)stub;
+                }
                 local.unresolved++;
                 if (g_import_reporter) {
                     char text[32];
@@ -425,6 +537,10 @@ int nfsu2_pe_resolve_imports(struct nfsu2_pe_image *image, struct nfsu2_pe_impor
             if (!address && nfsu2_winsock_lookup && library_is(library, "ws2_32.dll"))
                 address = nfsu2_winsock_lookup(symbol, 0);
             if (!address) {
+                void *stub = make_stub(library, symbol, 0);
+
+                if (stub)
+                    iat[index] = (unsigned int)(uintptr_t)stub;
                 local.unresolved++;
                 if (g_import_reporter)
                     g_import_reporter(library, symbol);

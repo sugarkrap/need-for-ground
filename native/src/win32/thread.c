@@ -45,7 +45,12 @@ void nfsu2_thread_destroy(struct nfsu2_object *obj)
 {
     struct nfsu2_thread *t = (struct nfsu2_thread *)obj;
 
-    if (!t->detached && !t->finished)
+    /*
+     * Detach unless something already joined it. Skipping this when the thread had
+     * finished used to leak the pthread's own bookkeeping: detach on a terminated,
+     * unjoined thread is valid and is what reaps it.
+     */
+    if (!t->detached)
         pthread_detach(t->tid);
     pthread_cond_destroy(&t->cond);
     pthread_mutex_destroy(&t->lock);
@@ -82,6 +87,10 @@ static void *thread_trampoline(void *arg)
     t->finished = 1;
     pthread_cond_broadcast(&t->cond);
     pthread_mutex_unlock(&t->lock);
+
+    /* The thread's own reference, released last: nothing may touch `t` after this,
+     * because this may be what frees it. */
+    nfsu2_obj_release(&t->obj);
     return NULL;
 }
 
@@ -110,6 +119,19 @@ HANDLE WINAPI CreateThread(LPSECURITY_ATTRIBUTES sa, SIZE_T stack_size,
     pthread_mutex_init(&t->lock, NULL);
     pthread_cond_init(&t->cond, NULL);
 
+    /*
+     * A reference for the *thread*, on top of the one the handle owns.
+     *
+     * Without it, CloseHandle on a thread handle while the thread is still running
+     * drops the count to zero and nfsu2_thread_destroy frees the object - including
+     * pthread_mutex_destroy on the lock the trampoline is about to use. The game
+     * closes thread handles promptly, as most Windows code does, and glibc catches
+     * the result: "assertion failed: mutex->__data.__owner == 0" from inside
+     * pthread_cond_wait, with nothing to connect it to a closed handle. The
+     * trampoline releases this reference as its last act.
+     */
+    t->obj.refs++;
+
     pthread_attr_init(&attr);
     if (stack_size)
         pthread_attr_setstacksize(&attr, stack_size < 65536 ? 65536 : stack_size);
@@ -118,6 +140,7 @@ HANDLE WINAPI CreateThread(LPSECURITY_ATTRIBUTES sa, SIZE_T stack_size,
 
     if (rc != 0) {
         nfsu2_set_last_error_from_errno(rc);
+        t->obj.refs--; /* no thread to own it */
         nfsu2_obj_release(&t->obj);
         return NULL;
     }

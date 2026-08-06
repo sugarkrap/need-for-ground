@@ -62,6 +62,9 @@ win32_sources = files(
   'src/win32/time.c',
   'src/win32/toolhelp.c',
   'src/win32/volume.c',
+  # Audio is not implemented; this answers DSERR_NODRIVER instead of leaving the
+  # game's only dsound import unresolved and therefore callable garbage.
+  'src/dsound/dsound.c',
   'src/winmm/mmtimer.c',
   'src/ws2_32/posix_net.c',
   'src/ws2_32/winsock.c',
