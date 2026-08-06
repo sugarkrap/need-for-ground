@@ -283,6 +283,29 @@ Three lessons, each of which produced a confidently wrong report first:
    DXVK bug; capturing the source image - which could not possibly be empty - is
    what exposed the probe. `native/patches/dxvk-blit-probe.md` has the detail.
 
+### Hybrid execution: original code calling the shim
+
+The loader resolves the exe's IAT against our own implementation (249 of 251
+imports; the two left are DXVK's Direct3DCreate9, absent from that particular test
+binary, and DirectSound, which is genuinely unimplemented). Original machine code
+therefore calls our shim, and ported C calls it directly - both verified on the same
+two functions.
+
+Verification cannot use equality, because the functions return clock readings. It
+uses bracketing instead, which is stronger than it sounds: our clocks count from
+process start, so their values are small, while a real `timeGetTime` returns
+milliseconds since boot and a real `QueryPerformanceCounter` a TSC-scale value. A
+reading sandwiched between two of our own samples can only have come from our
+implementation - `timeGetTime()=7` on a 7ms-old process is not ambiguous.
+
+Getting the IAT filled needed three fixes, all the same hidden-visibility trap as
+finding 4 above in different clothes: `_SHELL32_` and `_NTSYSTEM_` (RtlUnwind is
+declared NTSYSAPI) added to the per-DLL macros; ws2_32 resolved through an explicit
+table rather than dlsym, because its entry points are hidden *deliberately* (their
+names are libc's); and ws2_32's imports being **by ordinal** - 21 of the game's
+Winsock imports carry no name in the file at all, so a name-only resolver leaves
+them empty and silently understates the gap.
+
 ## Widescreen/ultrawide FOV patch
 
 Goal: correct field-of-view for arbitrary aspect ratios, baked into the

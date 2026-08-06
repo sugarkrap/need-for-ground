@@ -392,6 +392,35 @@ hidden-visibility trap in different clothes:
   have no name in the file at all. The same table carries ws2_32.dll's documented
   ordinals, without which those 21 slots would stay empty.
 
+### Hybrid execution works
+
+Two manifest entries call Win32 imports, which makes them the interesting case:
+the ported copy calls our shim directly, and the original - once the IAT is
+resolved - reaches the same shim through its import table.
+
+```
+ok - the ORIGINAL FUN_006f5ac8 returned 7720315, bracketed by our own
+     7719965..7720405 - it called our QueryPerformanceCounter
+ok - the ORIGINAL __fastcall FUN_006fea95 returned its ECX argument
+ok - it stored timeGetTime()=7, within our 7..7 - our shim again
+```
+
+The bracketing is the proof, not the agreement: these return clock readings, which
+move, so exact equality is not available. Our clocks count from *process start*, so
+their values are small - a real `timeGetTime` returns milliseconds since boot and a
+real `QueryPerformanceCounter` a TSC-scale value, either of them orders of magnitude
+larger. A reading sandwiched between two of our own samples can only have come from
+our implementation.
+
+So original machine code and ported C can now call the same shim, which is the
+property incremental porting needs. `__fastcall` (argument in ECX) is exercised on
+both sides too.
+
+One more decompiler-versus-header spelling difference turned up here and is fixed
+in the importer: Ghidra calls `LARGE_INTEGER`'s nested struct `s`, Wine calls it
+`u`, so `value.s.LowPart` does not compile. Rewritten narrowly, on the two field
+names that can appear, rather than by replacing `.s.` everywhere.
+
 ### What comes next
 
 1. Widen the manifest. The renderer scope in `../DIRECTX_SCOPE.md` is the useful

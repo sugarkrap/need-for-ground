@@ -171,6 +171,18 @@ const extractSignature = (text: string): string | null => {
   return null;
 };
 
+/**
+ * Ghidra calls LARGE_INTEGER's nested struct `s`; Wine's headers call it `u`
+ * (and also leave it anonymous). So `value.s.LowPart` does not compile. Rewritten
+ * narrowly - only the two field names that can appear - rather than by replacing
+ * `.s.` everywhere, which would hit any struct with a member called `s`.
+ *
+ * Same class of problem as the GWL_* names in win32_compat.h: the decompiler and
+ * the headers disagree about a spelling, and the port has to pick one.
+ */
+const fixLargeIntegerFields = (text: string): string =>
+  text.replace(/\.s\.LowPart\b/g, ".u.LowPart").replace(/\.s\.HighPart\b/g, ".u.HighPart");
+
 const applyConventions = (text: string): { text: string; used: string | null } => {
   let used: string | null = null;
   let result = text;
@@ -189,7 +201,8 @@ const normaliseSource = (
   sourcePath: string,
 ): { text: string; used: string | null } => {
   const original = Deno.readTextFileSync(sourcePath);
-  const { text: body, used } = applyConventions(original);
+  const { text: converted, used } = applyConventions(original);
+  const body = fixLargeIntegerFields(converted);
   const fileName = sourcePath.split("/").pop() ?? sourcePath;
 
   const header = [

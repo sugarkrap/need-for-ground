@@ -204,6 +204,85 @@ static void test_imports(struct nfsu2_pe_image *image)
     }
 }
 
+/* --- hybrid execution: original code calling our shim -------------------- */
+
+/*
+ * The point of resolving the IAT, demonstrated.
+ *
+ * Both functions call a Win32 import. The ported copies call our shim directly;
+ * the originals reach the same shim through their import table. Verification does
+ * not need the two to agree exactly - they return clock readings, which move - it
+ * needs to show the call landed in *our* implementation, and the clocks make that
+ * easy: ours count from process start, so they are small. A real Windows
+ * timeGetTime returns milliseconds since boot and a real QueryPerformanceCounter
+ * returns a TSC-scale value; either would be orders of magnitude larger. A value
+ * bracketed by two of our own samples can only have come from our shim.
+ */
+static void test_hybrid_execution(const struct nfsu2_pe_image *image)
+{
+    nfsu2_original_FUN_006f5ac8 original_qpc = NFSU2_ORIGINAL(FUN_006f5ac8, image);
+    nfsu2_original_FUN_006fea95 original_timer = NFSU2_ORIGINAL(FUN_006fea95, image);
+    LARGE_INTEGER before, after;
+    unsigned long long from_original;
+    unsigned long long from_ported;
+
+    printf("\n# hybrid execution: original code calling our shim through the IAT\n");
+
+    CHECK(original_qpc && original_timer, "both import-using originals resolved");
+    if (!original_qpc || !original_timer)
+        return;
+
+    /* QueryPerformanceCounter, through the original's import table. */
+    QueryPerformanceCounter(&before);
+    from_original = (unsigned long long)original_qpc();
+    QueryPerformanceCounter(&after);
+
+    CHECK(from_original >= (unsigned long long)before.QuadPart &&
+          from_original <= (unsigned long long)after.QuadPart,
+          "the ORIGINAL FUN_006f5ac8 returned %llu, bracketed by our own %llu..%llu "
+          "- it called our QueryPerformanceCounter",
+          from_original, (unsigned long long)before.QuadPart,
+          (unsigned long long)after.QuadPart);
+
+    /* And the ported copy of the same function, calling the shim directly. */
+    QueryPerformanceCounter(&before);
+    from_ported = (unsigned long long)FUN_006f5ac8();
+    QueryPerformanceCounter(&after);
+
+    CHECK(from_ported >= (unsigned long long)before.QuadPart &&
+          from_ported <= (unsigned long long)after.QuadPart,
+          "the PORTED FUN_006f5ac8 agrees (%llu)", from_ported);
+
+    /* timeGetTime through a __fastcall original: the convention is part of the
+     * test, since fastcall passes the first argument in ECX. */
+    {
+        DWORD original_state[8];
+        DWORD ported_state[8];
+        DWORD tick_before, tick_after;
+        DWORD *returned;
+
+        memset(original_state, 0xcd, sizeof(original_state));
+        memset(ported_state, 0xcd, sizeof(ported_state));
+
+        tick_before = GetTickCount();
+        returned = original_timer(original_state);
+        tick_after = GetTickCount();
+
+        CHECK(returned == original_state,
+              "the ORIGINAL __fastcall FUN_006fea95 returned its ECX argument");
+        CHECK(original_state[0] >= tick_before && original_state[0] <= tick_after + 2u,
+              "it stored timeGetTime()=%lu, within our %lu..%lu - our shim again",
+              (unsigned long)original_state[0], (unsigned long)tick_before,
+              (unsigned long)tick_after);
+        CHECK(original_state[2] == 0 && original_state[3] == 0 && original_state[4] == 0x1000,
+              "and initialised the rest of the struct as the decompilation says");
+
+        FUN_006fea95(ported_state);
+        CHECK(ported_state[4] == 0x1000 && ported_state[0] >= tick_before,
+              "the ported copy does the same");
+    }
+}
+
 /* --- 2. against the original machine code -------------------------------- */
 
 static void test_against_original(const struct nfsu2_pe_image *image)
@@ -376,6 +455,7 @@ int main(int argc, char **argv)
                image.image_base, image.image_size / 1024, image.section_count,
                image.entry_point);
         test_imports(&image);
+        test_hybrid_execution(&image);
         test_against_original(&image);
         printf("\n     %d differential comparisons against original code\n",
                g_differential_checks);

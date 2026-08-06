@@ -49,6 +49,20 @@ functions:
     kind: game
     note: per-axis proximity test - true when two float[3] agree within a tolerance
 
+  # These two call Win32 *imports*, which makes them the interesting case: the
+  # ported copy calls our shim directly, and the original - once the loader has
+  # resolved the IAT - calls the same shim through its import table. Running both
+  # is what proves hybrid execution works.
+  - address: 0x6f5ac8
+    symbol: FUN_006f5ac8
+    kind: game
+    note: reads QueryPerformanceCounter and returns the counter as a 64-bit value
+
+  - address: 0x6fea95
+    symbol: FUN_006fea95
+    kind: game
+    note: __fastcall - initialises a timer struct from timeGetTime
+
 # Tried, and deliberately excluded. Each fails for a different reason, and the
 # three together are a fair summary of what "the decompiler output is not
 # compilable C" means in practice. The importer prints these so they stay
