@@ -559,15 +559,44 @@ absolute pointers by adding the object's base. The loop count comes from the dat
 (`param_1[3]`), so a wrong count walks off the end - which means the data is wrong,
 not the loop.
 
-Two leads, and they may be the same one:
+That reading was wrong, and the thing that showed it was running the game again.
+**The failure is not deterministic.** Three consecutive runs, unchanged binary:
 
-1. **It has opened no data files at all.** The only paths in the trace are `J:\` and
-   `J:\bin.dat`. So the table being relocated is statically initialised in the image
-   rather than loaded, and something that should have filled it did not.
-2. **`IDirect3DDevice9::BeginStateBlock` fails repeatedly** with `D3DERR_INVALIDCALL`
-   (`0x8876086c`). That is what DXVK returns when a state block is already recording,
-   so a missing or failed `EndStateBlock` would leave every later `Begin` failing -
-   and the game builds its render states through those.
+```
+run 1: malloc(): invalid next size (unsorted)      -> abort
+run 2: exception 0xc0000005 at 0x5793e7            -> the relocation loop
+run 3: exception 0xc0000005 in ld.so               -> _dl_allocate_tls_init
+```
+
+`malloc(): invalid next size` is glibc reporting **heap corruption**: something has
+written past the end of an allocation. That single line reframes all three: the
+relocation loop walking off the end is a *symptom* of corrupted data, not a cause,
+and a crash inside the dynamic loader's TLS allocation is what a corrupted heap looks
+like when the next thing to allocate happens to be a thread.
+
+So chasing the relocation loop, or the fact that no data files had been opened, would
+have been chasing downstream effects. What is worth recording about that run instead:
+
+- Only **3** of the ~130 threads in the process are ours; the rest are DXVK's
+  shader-compile workers churning. A 32-bit address space with that many stacks plus
+  DXVK plus the game is also close enough to full that allocation failures are
+  plausible on their own.
+- `IDirect3DDevice9::BeginStateBlock` fails repeatedly with `D3DERR_INVALIDCALL`,
+  which is what DXVK returns when a state block is *already* recording. That is a
+  real bug to fix on its own merits, and it may or may not share a cause with the
+  corruption.
+
+The next step is a memory sanitiser rather than another read of a disassembly:
+build the shim at `-m32` with `-fsanitize=address` and let the redzones name the
+writer. The game's own writes into its mapped image are invisible to ASan, but a
+write past the end of a block *we* handed it is exactly what it is for. The
+alternative, and cheaper first move, is `MALLOC_CHECK_=3` to abort at the corrupting
+operation rather than at the next unrelated one.
+
+What is *not* suspect, having been checked: `HeapSize` returns
+`malloc_usable_size`, which is genuinely usable space, so a caller writing that much
+cannot corrupt anything; and `HeapReAlloc` takes its old size from the same place
+rather than guessing.
 
 ## Known gaps, in rough priority order
 
