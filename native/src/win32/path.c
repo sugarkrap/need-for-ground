@@ -85,6 +85,74 @@ void nfsu2_path_reset(void)
     g_root[0] = '\0';
 }
 
+/*
+ * Drive letters, from NFSU2_DRIVE_<letter>=[cdrom:]<host dir>.
+ *
+ * An unmapped letter means "the install drive", which is right for almost every
+ * path the game builds. The exception is the one it records in its own registry:
+ * "CD Drive"="J:\\", the drive it was installed from, which it looks at when it
+ * wants its disc. The optional cdrom: prefix says what kind of drive that is,
+ * because the game asks separately through GetDriveTypeA.
+ *
+ * Read from the environment once per letter and cached: there are 26 of them and
+ * the answer cannot change within a run.
+ */
+static const char *g_drive_path[26];
+static char g_drive_probed[26];
+static char g_drive_cdrom[26];
+
+static int drive_index(char letter)
+{
+    if (letter >= 'a' && letter <= 'z')
+        letter = (char)(letter - 'a' + 'A');
+    if (letter < 'A' || letter > 'Z')
+        return -1;
+    return letter - 'A';
+}
+
+static void drive_probe(int index)
+{
+    char name[16];
+    const char *value;
+
+    if (g_drive_probed[index])
+        return;
+
+    snprintf(name, sizeof(name), "NFSU2_DRIVE_%c", 'A' + index);
+    value = getenv(name);
+    if (value && !*value)
+        value = NULL;
+    if (value && strncasecmp(value, "cdrom:", 6) == 0) {
+        g_drive_cdrom[index] = 1;
+        value += 6;
+    }
+    g_drive_path[index] = value;
+    g_drive_probed[index] = 1;
+    if (value)
+        nfsu2_shim_trace("drive %c: -> %s%s", 'A' + index, value,
+                         g_drive_cdrom[index] ? " (CD-ROM)" : "");
+}
+
+const char *nfsu2_path_drive(char letter)
+{
+    int index = drive_index(letter);
+
+    if (index < 0)
+        return NULL;
+    drive_probe(index);
+    return g_drive_path[index];
+}
+
+int nfsu2_path_drive_is_cdrom(char letter)
+{
+    int index = drive_index(letter);
+
+    if (index < 0)
+        return 0;
+    drive_probe(index);
+    return g_drive_path[index] != NULL && g_drive_cdrom[index];
+}
+
 const char *nfsu2_path_root(void)
 {
     return g_root[0] ? g_root : ".";
@@ -167,16 +235,28 @@ int nfsu2_path_to_host(const char *win_path, char *out, size_t out_size)
 
     cursor = work;
 
-    /* Drive letter and/or leading separator: both mean "game root". There is
-     * no meaningful C:\ on this platform and the game only ever uses its own
-     * install drive. */
-    if (((cursor[0] >= 'A' && cursor[0] <= 'Z') || (cursor[0] >= 'a' && cursor[0] <= 'z')) &&
-        cursor[1] == ':')
-        cursor += 2;
-    while (*cursor == '\\' || *cursor == '/')
-        cursor++;
+    /*
+     * Drive letters. An unmapped one means "game root", which is right for the
+     * install drive and was once thought to be the only case - the comment here
+     * used to say the game only ever uses its own install drive. It does not: it
+     * records the drive it was installed *from* in its registry ("CD Drive"="J:\\")
+     * and looks there for its disc, so that letter has to be able to point
+     * somewhere else. NFSU2_DRIVE_J=/path/to/mounted/disc does that.
+     */
+    {
+        const char *mapped = NULL;
 
-    acc_len = (size_t)snprintf(acc, sizeof(acc), "%s", nfsu2_path_root());
+        if (((cursor[0] >= 'A' && cursor[0] <= 'Z') ||
+             (cursor[0] >= 'a' && cursor[0] <= 'z')) && cursor[1] == ':') {
+            mapped = nfsu2_path_drive(cursor[0]);
+            cursor += 2;
+        }
+        while (*cursor == '\\' || *cursor == '/')
+            cursor++;
+
+        acc_len = (size_t)snprintf(acc, sizeof(acc), "%s",
+                                   mapped ? mapped : nfsu2_path_root());
+    }
     if (acc_len >= sizeof(acc))
         return -ENAMETOOLONG;
 
@@ -238,5 +318,9 @@ int nfsu2_path_to_host(const char *win_path, char *out, size_t out_size)
     if (!missing_tail)
         cache_store(win_path, acc);
 
+    /* Every translated path, when tracing: "where is it looking?" is the first
+     * question about a game that cannot find its data, and this answers it. */
+    if (nfsu2_shim_trace_enabled())
+        nfsu2_shim_trace("path %s -> %s%s", win_path, acc, missing_tail ? " (missing)" : "");
     return 0;
 }

@@ -360,7 +360,63 @@ Threads the game creates now get their own TEB in the trampoline, since `%fs` an
 the TEB are both per-thread and the first `__try` on a worker would otherwise write
 through a stray segment.
 
-### What the disc check needs
+### The disc check, solved
+
+It is two questions, and it took running the game to find either:
+
+1. `GetDriveTypeA("J:\")` must answer `DRIVE_CDROM`. `J:` is not a guess - the game
+   reads it out of its own registry, where the installer wrote
+   `"CD Drive"="J:\"`.
+2. `CreateFileA("J:\bin.dat")` must succeed. `BIN.DAT` is a 130-byte file in the
+   root of disc 2.
+
+Neither had an answer here, for reasons that were written down as facts:
+`volume.c` said "the disc check is gone (that is what tools/unwrap.py is for)" -
+but `unwrap.py` removes *SafeDisc*, and EA's own media check is a different thing
+that is still in the executable. And `path.c` said "the game only ever uses its own
+install drive", so every drive letter resolved to the game root.
+
+So there are now two small mechanisms, and neither invents anything:
+
+- **`tools/import_wine_registry.ts`** copies the game's own keys out of a Wine
+  prefix into `registry.ini` - its registration code, its video settings, and the
+  `CD Drive` value the check is built on. They are the user's own values from their
+  own install, and `registry.ini` stays in the game directory: a registration code
+  does not belong in a repository. `Wow6432Node` is stripped, because a 64-bit
+  prefix redirects a 32-bit installer's writes and this port has no such
+  redirection - the paths the game asks for, visible in the trace, have none.
+- **`NFSU2_DRIVE_<letter>=[cdrom:]<host dir>`** maps a drive letter to a directory
+  and says what kind of drive it is. Unmapped letters still mean the install drive,
+  and an unmapped `J:` still reports `DRIVE_NO_ROOT_DIR` - the honest answer when no
+  disc has been provided.
+
+With those, the dialog is gone and the game runs on into graphics initialisation.
+
+### Where it stops now: stack alignment
+
+```
+Thread 1 received signal SIGSEGV
+0xf7973448 in dxvk::DxvkInstance::DxvkInstance(...)
+=> movaps %xmm0,-0x178(%ebp)
+```
+
+The game calls `Direct3DCreate9` through its import table, DXVK gets four frames
+into constructing its instance, and dies on an *aligned* 16-byte SSE store to a
+stack slot. **MSVC-compiled i386 code does not keep the stack 16-byte aligned;
+GCC-compiled code assumes it is.** Our own shim never had this problem because
+`WINAPI` carries `force_align_arg_pointer` (see `win32_compat.h`) - every one of the
+250 resolved imports realigns on entry. DXVK's exports are not ours and do not.
+
+That makes the next piece of work concrete, and it is the same piece the fake-device
+test predicted from the other direction: **a D3D9 bridge**. Every entry point the
+game reaches in DXVK needs a thunk that is `__stdcall` (Windows' COM ABI, callee
+pops) *and* `force_align_arg_pointer` (realign for GCC's SSE), forwarding to DXVK's
+`__cdecl` method. That is one thunk per method, which is exactly the sort of thing
+to generate rather than write - and `analysis/derive_vtable_args.py` already reads
+the argument count of every method out of the SDK headers, which is all a generator
+needs.
+
+### What the disc check needed (superseded by the section above)
 
 The dialog comes from the game's own code and loops because `MessageBoxA` answers
 `IDOK`, which it reads as "retry". `GetVolumeInformationA` is not in its import

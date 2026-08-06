@@ -2,11 +2,19 @@
  * volume.c - drives and free space.
  *
  * The game asks two questions here: "is there room for a save game" and "what
- * drive letter is the CD in". The first is answered honestly from statvfs. The
- * second has no answer on Linux and does not need one - the disc check is gone
- * (that is what tools/unwrap.py is for), and the data files are resolved through
- * the game root, so a drive-letter probe should find exactly one drive: C:,
- * fixed, which is the game root.
+ * drive letter is the CD in". The first is answered honestly from statvfs.
+ *
+ * The second used to be answered "there is no CD, and the disc check is gone
+ * anyway - that is what tools/unwrap.py is for". Half of that is wrong, and
+ * launching the game is what showed it: unwrap.py removes *SafeDisc*, not EA's own
+ * media check, which is still in the executable. It reads the drive it was
+ * installed from out of its own registry ("CD Drive"="J:\\"), asks
+ * GetDriveTypeA about it, and puts up "Please insert Disc 2" when the answer is
+ * DRIVE_NO_ROOT_DIR - which is what a letter with nothing mapped reports.
+ *
+ * So a mapped drive is now reported for what the user says it is
+ * (NFSU2_DRIVE_J=cdrom:/mnt/disc), and an unmapped one still reads as absent.
+ * Nothing is claimed to exist that does not.
  */
 #include "shim_internal.h"
 
@@ -16,10 +24,16 @@
 
 DWORD WINAPI GetLogicalDrives(void)
 {
-    /* Bit 2 is C:. Reporting only C: means a caller scanning for a CD-ROM
-     * finds none, which is the truth here and the answer that makes its
-     * "no disc" path run instead of a wrong-drive path. */
-    return 1u << 2;
+    DWORD mask = 1u << 2; /* C:, the install drive */
+    char letter;
+
+    /* Plus whatever the user mapped, or a caller scanning the drives would never
+     * consider the letter its own registry told it to look at. */
+    for (letter = 'A'; letter <= 'Z'; letter++) {
+        if (nfsu2_path_drive(letter))
+            mask |= 1u << (letter - 'A');
+    }
+    return mask;
 }
 
 UINT WINAPI GetDriveTypeA(LPCSTR root)
@@ -30,10 +44,18 @@ UINT WINAPI GetDriveTypeA(LPCSTR root)
     if ((root[0] == 'C' || root[0] == 'c') && root[1] == ':')
         return DRIVE_FIXED;
 
+    if (nfsu2_path_drive(root[0])) {
+        UINT type = nfsu2_path_drive_is_cdrom(root[0]) ? DRIVE_CDROM : DRIVE_FIXED;
+
+        nfsu2_shim_trace("GetDriveTypeA(%c:) = %s", root[0],
+                         type == DRIVE_CDROM ? "DRIVE_CDROM" : "DRIVE_FIXED");
+        return type;
+    }
+
     /*
-     * Deliberately not DRIVE_CDROM for any letter: claiming a CD-ROM exists
-     * would send the game looking for a disc it cannot find. DRIVE_NO_ROOT_DIR
-     * is what Windows reports for a letter with nothing mounted.
+     * Nothing mapped there. DRIVE_NO_ROOT_DIR is what Windows reports for a letter
+     * with nothing mounted, and it is what makes the game's "no disc" path run -
+     * which is the honest outcome when no disc has been provided.
      */
     return DRIVE_NO_ROOT_DIR;
 }

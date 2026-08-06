@@ -28,6 +28,7 @@
  */
 #include <nfsu2/win32_compat.h>
 
+#include <nfsu2/d3d9_native.h>
 #include <nfsu2/pe_loader.h>
 #include <nfsu2/seh.h>
 #include <nfsu2/teb.h>
@@ -62,6 +63,7 @@ int main(int argc, char **argv)
 {
     const char *exe = getenv("NFSU2_EXE");
     const char *root = getenv("NFSU2_ROOT");
+    int use_fork = 1;
     struct nfsu2_pe_image image;
     struct nfsu2_pe_import_stats stats;
     char error[256] = "";
@@ -75,8 +77,13 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--exe") && i + 1 < argc) exe = argv[++i];
         else if (!strcmp(argv[i], "--root") && i + 1 < argc) root = argv[++i];
+        /* Vulkan and fork() are not friends: a driver that has already touched
+         * the parent may not survive being inherited. --no-fork runs the game in
+         * this process instead, at the cost of the parent's exit report. */
+        else if (!strcmp(argv[i], "--no-fork")) use_fork = 0;
         else {
             fprintf(stderr, "usage: %s [--exe PATH] [--root DIR]\n"
+                            "  --no-fork runs in this process (Vulkan dislikes fork)\n"
                             "  NFSU2_SHIM_TRACE=1 logs every Win32 call\n", argv[0]);
             return 2;
         }
@@ -106,6 +113,16 @@ int main(int argc, char **argv)
     printf("mapped     : base 0x%x, %u KiB, entry 0x%x\n",
            image.image_base, image.image_size / 1024, image.entry_point);
 
+    /*
+     * Take the address of Direct3DCreate9 before resolving imports, and this is
+     * load-bearing rather than diagnostic: the IAT is filled through
+     * dlsym(RTLD_DEFAULT, ...), which only finds what is actually loaded, and the
+     * linker drops a library nothing references (--as-needed). Without this the
+     * game called an unresolved slot - the raw hint-table RVA, 0x3e616c - and
+     * faulted there, having got all the way through its disc check first.
+     */
+    printf("d3d9       : Direct3DCreate9 at %p\n", (void *)(uintptr_t)Direct3DCreate9);
+
     nfsu2_pe_set_import_reporter(report_unresolved);
     nfsu2_pe_resolve_imports(&image, &stats);
     nfsu2_pe_set_import_reporter(NULL);
@@ -113,6 +130,16 @@ int main(int argc, char **argv)
            stats.resolved, stats.total, stats.by_ordinal);
 
     fflush(stdout);
+    if (!use_fork) {
+        if (nfsu2_teb_install(error, sizeof(error)) != 0) {
+            fprintf(stderr, "TEB: %s\n", error);
+            return 1;
+        }
+        if (nfsu2_seh_install(error, sizeof(error)) != 0)
+            fprintf(stderr, "SEH unavailable: %s\n", error);
+        run_entry_point(image.entry_point);
+        return 0;
+    }
     child = fork();
     if (child < 0) {
         perror("fork");

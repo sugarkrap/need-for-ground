@@ -73,6 +73,12 @@ void nfsu2_set_last_error_from_errno(int err);
 int nfsu2_path_set_root(const char *root, char *out, size_t out_size);
 void nfsu2_path_reset(void);
 const char *nfsu2_path_root(void);
+/* Host directory for a drive letter (NFSU2_DRIVE_J=...), or NULL for the install
+ * drive. The game keeps the drive it was installed from in its own registry. */
+const char *nfsu2_path_drive(char letter);
+/* Is that mapped drive a CD-ROM (NFSU2_DRIVE_J=cdrom:/mnt/disc)? volume.c answers
+ * GetDriveTypeA from this, and the game's media check reads that answer. */
+int nfsu2_path_drive_is_cdrom(char letter);
 
 /* The filter set by SetUnhandledExceptionFilter (process.c), for exception.c. */
 LPTOP_LEVEL_EXCEPTION_FILTER nfsu2_top_level_filter(void);
