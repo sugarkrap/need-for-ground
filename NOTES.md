@@ -311,13 +311,30 @@ as well: forcing a flush and wait before every Present, via a one-pixel readback
 (`--sync-each-frame`), leaves the window black.
 
 So: valid Vulkan, correct indices, correct rects, correct images, a draw that is
-issued, no sync hazard, and a HUD into the same attachment that *is* visible - yet
-the blit contributes nothing, except in about one frame in ten when the swapchain
-has more images. Every hypothesis reachable from outside DXVK has now been tested
-and failed. The experiment that would split it: read the swapchain image back
-inside DXVK after the blit and the HUD pass. Colour present means the fault is in
-presentation/compositing below DXVK (Wayland session, NVIDIA, XWayland); colour
-absent means the blit draw emits no fragments.
+issued, no sync hazard, and a HUD into the same attachment that *is* visible.
+
+**The swapchain read-back inside DXVK settled it** (patch and full write-up in
+`native/patches/dxvk-blit-probe.md`). The blitter's *source* image - the D3D9
+backbuffer - reads as **black** at blit time, while `GetRenderTargetData` on that
+same backbuffer returns the cleared colour. The buffer is pre-filled with 0xAB
+before the copy, so the zeroes are real data and not a probe looking in the wrong
+place; the HUD's 252 pixels land in the same destination image in the same render
+pass, which is exactly why the HUD is visible over a black window.
+
+That reframes the problem. The blit is not broken - it runs and faithfully writes
+the black it is handed. The application's rendering is simply not in the image the
+swapchain path reads. The next thread to pull is DXVK's D3D9 backbuffer rotation:
+`D3D9SwapChainEx` calls `Swap()` on the back buffers after each present, so which
+`VkImage` backs `m_backBuffers[0]` at blit time, versus which one the device's
+render target points at, is the thing to log. It also explains the one-frame-in-ten
+flicker with more swapchain images: occasionally the rotation lines up.
+
+Two mistakes the probe itself made first, both of which produced confident wrong
+answers and are worth remembering. It had no host-read barrier, so a perfectly
+valid copy read back as zeroes with validation clean - and that got reported as
+"the blit draw produced nothing". And it had no control: capturing the *source*
+image, which could not possibly be empty, is what exposed the probe as faulty. A
+measurement tool needs its own control before its output is worth anything.
 
 Two lessons worth keeping. A frame counter is not evidence that anything is on
 screen - the readback path exists so that claim can be checked. And "one capture

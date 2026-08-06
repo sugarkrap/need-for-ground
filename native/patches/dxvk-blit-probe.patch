@@ -1,0 +1,230 @@
+diff --git a/src/dxvk/dxvk_swapchain_blitter.cpp b/src/dxvk/dxvk_swapchain_blitter.cpp
+index 644b76e..7c5b524 100644
+--- a/src/dxvk/dxvk_swapchain_blitter.cpp
++++ b/src/dxvk/dxvk_swapchain_blitter.cpp
+@@ -101,6 +101,21 @@ namespace dxvk {
+     if (srcRect.extent != dstRect.extent)
+       attachmentInfo.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+ 
++    /* nfsu2-unwrap probe: pre-clear to blue. If the captured image is blue the
++     * blit rasterised nothing; if it is black the blit ran and sampled black. */
++    if (m_probeEnabled < 0) {
++      std::string probe = env::getEnvVar("NFSU2_BLIT_PROBE");
++      m_probeEnabled = (probe == "1" || probe == "2") ? 1 : 0;
++    }
++
++    if (m_probeEnabled) {
++      attachmentInfo.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
++      attachmentInfo.clearValue.color.float32[0] = 0.0f;
++      attachmentInfo.clearValue.color.float32[1] = 0.0f;
++      attachmentInfo.clearValue.color.float32[2] = 1.0f;
++      attachmentInfo.clearValue.color.float32[3] = 1.0f;
++    }
++
+     VkRenderingInfo renderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO };
+     renderInfo.renderArea.offset = { 0u, 0u };
+     renderInfo.renderArea.extent = { dstExtent.width, dstExtent.height };
+@@ -140,6 +155,161 @@ namespace dxvk {
+     depInfo.pImageMemoryBarriers = &barrier;
+ 
+     ctx->cmdPipelineBarrier(DxvkCmdBuffer::ExecBuffer, &depInfo);
++
++    captureForProbe(ctx, dstView, srcView);
++  }
++
++
++  /*
++   * nfsu2-unwrap: does the presented image actually contain the blit's output?
++   *
++   * Copies the swapchain image into a host-visible buffer in the same command
++   * list that drew it, then reads that buffer several frames later - late enough
++   * that the submission has certainly completed, so no fence and no stall are
++   * needed. Reports through DXVK's logger rather than writing files from the
++   * render path.
++   */
++  void DxvkSwapchainBlitter::captureForProbe(
++    const Rc<DxvkCommandList>& ctx,
++    const Rc<DxvkImageView>&   dstView,
++    const Rc<DxvkImageView>&   srcView) {
++    if (!m_probeEnabled)
++      return;
++
++    /* =2 captures the source image instead of the destination: a control for the
++     * probe machinery itself, because readback proves the source holds pixels. */
++    bool captureSource = env::getEnvVar("NFSU2_BLIT_PROBE") == "2";
++    const Rc<DxvkImageView>& view = captureSource ? srcView : dstView;
++
++    VkExtent3D extent = view->mipLevelExtent(0u);
++    m_probeFrame += 1u;
++
++    /* Read what was copied 8 frames ago, then stop. */
++    if (m_probeBuffer != nullptr && m_probeFrame == 12u) {
++      const uint8_t* pixels = reinterpret_cast<const uint8_t*>(m_probeBuffer->mapPtr(0));
++      size_t count = size_t(m_probeExtent.width) * size_t(m_probeExtent.height);
++      size_t nonBlack = 0u;
++
++      for (size_t i = 0u; i < count; i++) {
++        if (pixels[i * 4u + 0u] || pixels[i * 4u + 1u] || pixels[i * 4u + 2u])
++          nonBlack += 1u;
++      }
++
++      size_t centre = (size_t(m_probeExtent.height / 2u) * size_t(m_probeExtent.width)
++        + size_t(m_probeExtent.width / 2u)) * 4u;
++
++      Logger::warn(str::format("NFSU2-BLIT-PROBE: first bytes ",
++        uint32_t(pixels[0]), " ", uint32_t(pixels[1]), " ", uint32_t(pixels[2]), " ",
++        uint32_t(pixels[3]), " (0xAB=171 means the copy did not land here)"));
++
++      Logger::warn(str::format("NFSU2-BLIT-PROBE: centre pixel B=", uint32_t(pixels[centre]),
++        " G=", uint32_t(pixels[centre + 1u]), " R=", uint32_t(pixels[centre + 2u]),
++        "  non-black ", nonBlack, "/", count));
++      Logger::warn(nonBlack * 4u > count
++        ? "NFSU2-BLIT-PROBE: the presented image HAS content -> fault is below DXVK"
++        : "NFSU2-BLIT-PROBE: the presented image is EMPTY -> the blit draw produced nothing");
++
++      m_probeBuffer = nullptr;
++      return;
++    }
++
++    if (m_probeFrame != 4u)
++      return;
++
++    DxvkBufferCreateInfo bufferInfo = { };
++    bufferInfo.size = VkDeviceSize(extent.width) * VkDeviceSize(extent.height) * 4u;
++    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
++    bufferInfo.stages = VK_PIPELINE_STAGE_TRANSFER_BIT;
++    bufferInfo.access = VK_ACCESS_TRANSFER_WRITE_BIT;
++
++    m_probeBuffer = m_device->createBuffer(bufferInfo,
++      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
++    m_probeExtent = { extent.width, extent.height };
++
++    /* 0xAB, not 0: on read-back, 0xAB means the copy never landed where we are
++     * looking, while 0x00 means it landed and the pixels really are black. */
++    std::memset(m_probeBuffer->mapPtr(0), 0xAB, size_t(bufferInfo.size));
++
++    Logger::warn(str::format("NFSU2-BLIT-PROBE: buffer slice offset=",
++      m_probeBuffer->getSliceInfo().offset, " size=", m_probeBuffer->getSliceInfo().size,
++      " mapPtr=", reinterpret_cast<uint64_t>(m_probeBuffer->mapPtr(0))));
++
++    Logger::warn(str::format("NFSU2-BLIT-PROBE: capturing ", extent.width, "x",
++      extent.height, captureSource ? " SOURCE image (control)" : " swapchain image"));
++
++    VkImageLayout presentLayout = view->image()->info().layout;
++
++    VkImageMemoryBarrier2 toTransfer = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
++    toTransfer.srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
++    toTransfer.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
++    toTransfer.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
++    toTransfer.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
++    toTransfer.oldLayout = presentLayout;
++    toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
++    toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++    toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++    toTransfer.image = view->image()->handle();
++    toTransfer.subresourceRange = view->imageSubresources();
++
++    VkDependencyInfo transferDep = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
++    transferDep.imageMemoryBarrierCount = 1;
++    transferDep.pImageMemoryBarriers = &toTransfer;
++
++    ctx->cmdPipelineBarrier(DxvkCmdBuffer::ExecBuffer, &transferDep);
++
++    VkBufferImageCopy2 region = { VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2 };
++    region.bufferOffset = m_probeBuffer->getSliceInfo().offset;
++    region.bufferRowLength = extent.width;
++    region.bufferImageHeight = extent.height;
++    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
++    region.imageSubresource.mipLevel = 0u;
++    region.imageSubresource.baseArrayLayer = 0u;
++    region.imageSubresource.layerCount = 1u;
++    region.imageExtent = { extent.width, extent.height, 1u };
++
++    VkCopyImageToBufferInfo2 copyInfo = { VK_STRUCTURE_TYPE_COPY_IMAGE_TO_BUFFER_INFO_2 };
++    copyInfo.srcImage = view->image()->handle();
++    copyInfo.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
++    copyInfo.dstBuffer = m_probeBuffer->getSliceInfo().buffer;
++    copyInfo.regionCount = 1;
++    copyInfo.pRegions = &region;
++
++    ctx->cmdCopyImageToBuffer(DxvkCmdBuffer::ExecBuffer, &copyInfo);
++
++    VkImageMemoryBarrier2 toPresent = toTransfer;
++    toPresent.srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
++    toPresent.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
++    toPresent.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
++    toPresent.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
++    toPresent.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
++    toPresent.newLayout = presentLayout;
++
++    /*
++     * The copied bytes also have to be made visible to the host. Without this the
++     * buffer reads back as zeroes even though the copy itself is valid - which is
++     * exactly the mistake that made this probe report an empty image for a source
++     * that demonstrably had content.
++     */
++    VkBufferMemoryBarrier2 hostBarrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2 };
++    hostBarrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
++    hostBarrier.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
++    hostBarrier.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
++    hostBarrier.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
++    hostBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++    hostBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++    hostBarrier.buffer = m_probeBuffer->getSliceInfo().buffer;
++    hostBarrier.offset = m_probeBuffer->getSliceInfo().offset;
++    hostBarrier.size = m_probeBuffer->getSliceInfo().size;
++
++    VkDependencyInfo presentDep = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
++    presentDep.imageMemoryBarrierCount = 1;
++    presentDep.pImageMemoryBarriers = &toPresent;
++    presentDep.bufferMemoryBarrierCount = 1;
++    presentDep.pBufferMemoryBarriers = &hostBarrier;
++
++    ctx->cmdPipelineBarrier(DxvkCmdBuffer::ExecBuffer, &presentDep);
++
++    ctx->track(m_probeBuffer, DxvkAccess::Write);
+   }
+ 
+ 
+@@ -344,6 +514,17 @@ namespace dxvk {
+     args.samplerGamma = m_samplerGamma->getDescriptor().samplerIndex;
+     args.samplerCursor = cursorSampler;
+ 
++    if (m_probeEnabled > 0 && m_probeFrame < 6u) {
++      Logger::warn(str::format("NFSU2-BLIT-PROBE: pipeline=",
++        reinterpret_cast<uint64_t>(pipeline),
++        " viewport=", viewport.width, "x", viewport.height,
++        " depth=[", viewport.minDepth, ",", viewport.maxDepth, "]",
++        " scissor=", scissor.extent.width, "x", scissor.extent.height,
++        " descriptors=", descriptors.size(),
++        " srcOffset=", args.srcOffset.x, ",", args.srcOffset.y,
++        " srcExtent=", args.srcExtent.width, "x", args.srcExtent.height));
++    }
++
+     ctx->cmdBindPipeline(DxvkCmdBuffer::ExecBuffer,
+       VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+ 
+diff --git a/src/dxvk/dxvk_swapchain_blitter.h b/src/dxvk/dxvk_swapchain_blitter.h
+index b210303..aa8e548 100644
+--- a/src/dxvk/dxvk_swapchain_blitter.h
++++ b/src/dxvk/dxvk_swapchain_blitter.h
+@@ -219,6 +219,19 @@ namespace dxvk {
+     uint32_t            m_gammaCpCount = 0;
+ 
+     Rc<DxvkBuffer>      m_cursorBuffer;
++
++    /* nfsu2-unwrap blit probe: copy the finished swapchain image into a
++     * host-visible buffer and report what is in it a few frames later. See
++     * native/patches/dxvk-blit-probe.md. */
++    Rc<DxvkBuffer>      m_probeBuffer;
++    VkExtent2D          m_probeExtent = { 0u, 0u };
++    uint32_t            m_probeFrame = 0u;
++    int                 m_probeEnabled = -1;
++
++    void captureForProbe(
++      const Rc<DxvkCommandList>& ctx,
++      const Rc<DxvkImageView>&   dstView,
++      const Rc<DxvkImageView>&   srcView);
+     Rc<DxvkImage>       m_cursorImage;
+     Rc<DxvkImageView>   m_cursorView;
+     VkRect2D            m_cursorRect = { };
