@@ -138,11 +138,13 @@ here.
    first run looks like. `DXVK_WSI_DRIVER=SDL2` fixes it; the smoke host sets
    it via `setenv(..., 0)` so the environment can still override.
 
-Verified end to end on this machine: a native ELF (no Wine loader) presenting
-frames through DXVK 3.0.2 -> Vulkan on an RTX 2060 SUPER, adapter identifier
-read back correctly through the D3D9 vtable. 32-bit is the real target and
-builds/tests pass there too; only the graphical smoke test is still blocked on
-32-bit SDL2 (`lib32-sdl2-compat`) not being installed.
+Verified end to end at the real target: an **i386** native ELF (no Wine loader)
+presenting 300 frames at 2560x1080 through a 32-bit DXVK 3.0.2 build -> Vulkan
+on an RTX 2060 SUPER, adapter identifier read back correctly through the D3D9
+vtable. That last part is what makes the convention finding above more than a
+reading of the headers: a stdcall/cdecl mismatch could not survive 300 frames of
+vtable dispatch. The 64-bit build does the same, and both test suites pass at
+-m32 and -m64 with no warnings.
 
 ## Widescreen/ultrawide FOV patch
 

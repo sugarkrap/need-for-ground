@@ -83,7 +83,9 @@ Requirements beyond a normal toolchain (Arch package names):
   (`lib32-mesa` or `lib32-nvidia-utils`)
 - `lib32-sdl2-compat` - **needed for the D3D9 smoke test and for DXVK's WSI**.
   Without it, meson still configures and the shim/ABI tests still build and
-  run; only the D3D9 target is skipped, with a message saying so.
+  run; only the D3D9 target is skipped, with a message saying so. (Verified
+  both ways: the degraded configure path works, and with it installed the
+  32-bit smoke test runs.)
 - `meson`, `ninja`, `glslang` (DXVK build)
 
 A 64-bit build (`meson setup native/build64`, no cross file) is supported for
@@ -103,17 +105,24 @@ Run `meson test -C native/build32` (and `build64`):
   compared between Wine's headers and DXVK Native's own headers. All agree, at
   both 32- and 64-bit.
 
-End-to-end, on this machine (64-bit, because 32-bit SDL2 is not installed yet):
+End-to-end at the real target width, on this machine:
 
 ```
-$ ./build64/nfsu2-smoke-d3d9 --frames 30
+$ ./build32/nfsu2-smoke-d3d9 --frames 300 --width 2560 --height 1080
+info:  DXVK: 3.0.2
+info:  Build: x86 gcc 16.1.1
+info:  Found device: NVIDIA GeForce RTX 2060 SUPER (NVIDIA 610.43.3)
 adapter    : NVIDIA GeForce RTX 2060 SUPER
 driver     : nvd3dum.dll
 vendor/dev : 10de:1f06
-presented  : 30 frames at 1280x720 (64-bit build)
+presented  : 300 frames at 2560x1080 (32-bit build)
 ```
 
-That is a native ELF, no wine loader, driving D3D9 -> DXVK -> Vulkan.
+That is an i386 native ELF, no wine loader, driving D3D9 -> DXVK -> Vulkan,
+with the adapter identifier read back through the D3D9 vtable - i.e. the
+convention decision in `d3d9_native.h` confirmed against the real library and
+not just against our own test doubles. The 64-bit build does the same at
+1280x720.
 
 ## Win32 coverage
 

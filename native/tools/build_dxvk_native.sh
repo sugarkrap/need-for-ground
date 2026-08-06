@@ -89,7 +89,8 @@ ninja -C "$BUILD_DIR" src/d3d9/all 2>/dev/null || ninja -C "$BUILD_DIR"
 mkdir -p "$OUT_DIR"
 found=0
 for so in "$BUILD_DIR"/src/d3d9/libdxvk_d3d9.so*; do
-    [[ -e "$so" ]] || continue
+    # The glob also matches meson's libdxvk_d3d9.so.<ver>.p object directory.
+    [[ -f "$so" || -L "$so" ]] || continue
     cp -P "$so" "$OUT_DIR/"
     found=1
 done

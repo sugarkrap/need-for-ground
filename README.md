@@ -135,8 +135,8 @@ used - see `native/README.md` for why that shape was chosen and
 
 Working today: the Win32 shim (~40% of the game's import list) with a 35-check
 selftest, a D3D9 calling-convention test, a Wine-vs-DXVK header layout probe,
-and an end-to-end smoke test that presents frames through DXVK to Vulkan. No
-game code is ported yet.
+and an end-to-end smoke test that presents frames through DXVK to Vulkan -
+verified as an i386 ELF at 2560x1080. No game code is ported yet.
 
 ## Setup
 
