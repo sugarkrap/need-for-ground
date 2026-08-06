@@ -132,6 +132,11 @@ Run `meson test -C native/build32` (and `build64`):
   from the real SDL stream - a keypress from whoever is at the machine lands in
   it too, and a test that fails when someone touches the keyboard is worse than
   no test.
+- **game-functions** - the ported functions, twice each: against a reference, and
+  against the original machine code with identical inputs (283 comparisons). Plus
+  import resolution, hybrid execution both directions, the TEB, and a renderer
+  function checked against a fake D3D9 device. Needs an unwrapped exe
+  (`-Dnfsu2_exe=`); without one it runs the reference half.
 - **seh** - 24 checks over the exception dispatcher: the handler chain walked in
   order until one accepts, the catch path (unwind the frames in between, then
   transfer control - `setjmp`/`longjmp` standing in for the `jmp` a `__except`
@@ -557,11 +562,62 @@ game's *own CRT initialisation*, not anything in the Win32 layer. The
 reproduction is kept, off by default, as `NFSU2_SEH_CXX_PROBE=1` in the
 game-functions selftest.
 
+### The renderer scope: one function in, and what it cost
+
+`../DIRECTX_SCOPE.md` lists 99 D3D9-touching functions as the port's starting
+scope. They are all shaped alike - game globals plus a call through a device
+pointer held in a global - so the first one in is the interesting one.
+`FUN_005b7a30` (a `SetRenderState` caller) is now ported and verified against the
+original. Three mechanisms had to exist first.
+
+**Globals bound to the image.** Ghidra names untyped data `DAT_00873370`, and the
+name carries the address - so *where* the storage is was never in doubt, and for a
+hybrid port it must be exactly there, since original and ported code have to share
+it. What the name does not carry is the access width, or whether it is integer or
+float, and both matter: a 4-byte store where the original stored 1 byte overwrites
+three neighbours, and `float` assigned through a `uint32_t` lvalue converts instead
+of reinterpreting. The instruction encoding says both, unambiguously
+(`mov DWORD PTR ds:0x873370,ecx`), so `tools/image_globals.ts` disassembles the one
+function that needs it and reads the answer off the operands. Where the binary is
+ambiguous - the same address touched at two widths, which is exactly what Ghidra's
+`_DAT_` prefix warns about - it refuses rather than choosing. A type no instruction
+can express (a pointer to an interface, say) goes in the manifest entry's
+`globals:` map, which is one line and reviewable.
+
+**The D3D9 ABI, twice.** The differential test builds a fake device - one vtable
+entry, no GPU, no DXVK - and it needs *two* of them. MSVC compiled the original
+against Windows' COM ABI, where methods are `__stdcall` and the callee pops; the
+ported copy is compiled against DXVK Native's headers, where `STDMETHODCALLTYPE`
+is empty and methods are `__cdecl`. Both are right for their own side and they
+cannot share one vtable. That is not a test artefact: it means ported renderer code
+calls DXVK directly and correctly, while any *original* renderer code still in the
+process needs a stdcall-to-cdecl shim in front of the device.
+
+**A decompiler bug, found the only way it could be.** A second function,
+`FUN_005bc7b0`, failed its differential test on the second of its two
+`SetRenderState` calls: the ported copy passed `param_1` where the original passed
+`param_2`. The machine code is unambiguous. The cause was upstream in
+`analysis/define_directx_types.py`, which declared every vtable slot `__stdcall`
+but *with no parameters* - so the decompiler could not know how many bytes a vtable
+call pops, and computed every later stack-argument read from the wrong esp.
+
+That is fixed by deriving the counts from the SDK header rather than remembering
+them (`analysis/derive_vtable_args.py`, whose `--check` verifies the parse against
+the method order already recorded in `directx_vtables.py`: 119 methods for
+`IDirect3DDevice9` and 17 for `IDirect3D9`, exact). The decompiled output in a
+local tree still predates the fix, so `FUN_005bc7b0` is in the manifest's excluded
+list with that explanation - **and every other function in the renderer scope that
+reads an argument after a vtable call is suspect until the types are redefined and
+the functions re-exported.** Which is the real lesson: differential testing against
+the original machine code is not belt-and-braces here, it is the only thing that
+would ever have caught this.
+
 ### What comes next
 
-1. Widen the manifest. The renderer scope in `../DIRECTX_SCOPE.md` is the useful
-   direction, since that is where the D3D9 boundary and both widescreen fixes
-   already are.
+1. Re-run `analysis/define_directx_types.py` and re-export the renderer scope, then
+   widen the manifest into it in bulk. The three mechanisms above are what that
+   needs, and the decompiler bug above is why doing it *before* re-exporting would
+   have produced quietly wrong code.
 2. Real SEH, now that the chain is reachable: `RaiseException`/`RtlUnwind` still
    abort rather than walking it (gap 2 above). The TEB was the prerequisite.
 3. A TEB per thread as soon as the port creates threads - `nfsu2_teb_install()` is

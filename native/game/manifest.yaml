@@ -75,11 +75,46 @@ functions:
     kind: game
     note: __fastcall destructor with a __try - saves, links and restores fs:[0]
 
+  # The first function from the renderer scope in ../../DIRECTX_SCOPE.md - a
+  # SetRenderState caller, which is what most of those 99 functions are. It is
+  # made of exactly the two things that scope needs to work: game globals bound to
+  # their addresses in the mapped image, and a D3D9 vtable call through a global
+  # device pointer.
+  #
+  # 0x870974 is that device pointer. The instructions only say "four bytes", which
+  # is true and useless, so its type is given here - the one thing the machine code
+  # cannot express. Everything else is recovered from the code that touches it.
+  - address: 0x5b7a30
+    symbol: FUN_005b7a30
+    kind: renderer
+    note: copies two matrix columns into globals, then SetRenderState(ZWRITEENABLE, 0)
+    globals:
+      0x870974: IDirect3DDevice9 *
+
 # Tried, and deliberately excluded. Each fails for a different reason, and
 # together they are a fair summary of what "the decompiler output is not
 # compilable C" means in practice. The importer prints these so they stay
 # visible rather than becoming folklore.
 excluded:
+  - address: 0x5bc7b0
+    symbol: FUN_005bc7b0
+    reason: >-
+      The decompilation is wrong, and finding out why is the most useful thing
+      this manifest has produced. It was added as a second renderer function -
+      two SetRenderState calls on one branch - and the differential test failed
+      on the second call: the ported copy passed param_1 where the original
+      passed param_2. The machine code is unambiguous
+      (`push [esp+8]` before the second call, after the first stdcall callee
+      popped its 12 bytes). The cause is upstream, in
+      analysis/define_directx_types.py: it declared each vtable slot __stdcall
+      but with no parameters, so the decompiler could not know how many bytes a
+      vtable call pops and computed every later stack-argument read from the
+      wrong esp. That is now fixed by deriving the counts from the SDK header
+      (analysis/derive_vtable_args.py), but the decompiled output in this tree
+      predates it. Re-run the type definer and re-export this function, and it
+      should come back correct - and every other function in
+      ../../DIRECTX_SCOPE.md that reads an argument after a vtable call is
+      suspect until then.
   - address: 0x75d950
     symbol: __SEH_prolog
     reason: >-

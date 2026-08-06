@@ -38,6 +38,7 @@
  *     error names the file you can actually go and look at
  */
 import { parse as parseYaml } from "@std/yaml";
+import { declarationFor, type GlobalType, recoverImageGlobals } from "./image_globals.ts";
 
 const NATIVE = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const REPO = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
@@ -62,6 +63,12 @@ interface Entry {
   kind: string;
   note: string;
   reason?: string;
+  /*
+   * Types for globals the machine code cannot describe on its own - a pointer to
+   * an interface, say, where the instructions only say "four bytes". Keyed by
+   * address, as written in the manifest: { "0x870974": "IDirect3DDevice9 *" }.
+   */
+  globals?: Record<string, string>;
 }
 
 interface Manifest {
@@ -107,6 +114,20 @@ const parseManifest = (): Manifest => {
         kind: String(entry.kind ?? "game"),
         note: String(entry.note ?? ""),
         reason: entry.reason ? String(entry.reason) : undefined,
+        globals: entry.globals
+          ? Object.fromEntries(
+            Object.entries(entry.globals).map(([key, value]) => [
+              /*
+               * YAML parses a bare `0x870974:` key into the number 8849268, so
+               * re-reading it as hex would give the wrong address - and silently,
+               * since the override would simply never match. Take the number as
+               * the value it already is, and only parse strings.
+               */
+              `0x${(/^0x/i.test(key) ? parseInt(key, 16) : Number(key)).toString(16)}`,
+              String(value),
+            ]),
+          )
+          : undefined,
       };
     });
 
@@ -210,13 +231,44 @@ const fixLargeIntegerFields = (text: string): string =>
  * exactly as it is. Any name this file declares as a label is therefore skipped
  * entirely, rather than rewritten into an address or reported as untyped.
  */
-const IMAGE_SYMBOL = /(&\s*)?\b((?:LAB|DAT|UNK|PTR)(?:_[A-Za-z][A-Za-z0-9]*)*_([0-9a-f]{8}))\b/g;
+/*
+ * The leading underscore is not optional decoration: Ghidra writes `_DAT_x` when
+ * the access at x is a *different size* than the symbol it defined there ("globals
+ * starting with '_' overlap smaller symbols at the same address"). Both spellings
+ * name storage, so both are matched - and if a file uses two widths at one address
+ * the width recovery sees the conflict and refuses, which is the right answer.
+ */
+const IMAGE_SYMBOL = /(&\s*)?\b(_?(?:LAB|DAT|UNK|PTR)(?:_[A-Za-z][A-Za-z0-9]*)*_([0-9a-f]{8}))\b/g;
+
+/* The address a Ghidra auto-name encodes: the trailing 8 hex digits. */
+const addressOfSymbol = (name: string): number | null => {
+  const match = /_([0-9a-f]{8})$/.exec(name);
+  return match ? parseInt(match[1], 16) : null;
+};
 
 const collectLabels = (text: string): Set<string> => {
   const labels = new Set<string>();
   for (const match of text.matchAll(/^\s*(\w+):(?!:)/gm)) labels.add(match[1]);
   for (const match of text.matchAll(/\bgoto\s+(\w+)\s*;/g)) labels.add(match[1]);
   return labels;
+};
+
+/*
+ * The extent of one function, so only its own code is disassembled: the next
+ * decompiled address. bulk_decompile.py writes one file per function named after
+ * its address, which makes the sorted list of those names an exact function map -
+ * no heuristics about where a function ends.
+ */
+const functionExtent = (
+  addresses: number[],
+  start: number,
+): { start: number; end: number } => {
+  for (const address of addresses) {
+    if (address > start) return { start, end: address };
+  }
+  /* The last function in the image: a generous window, since objdump stops at
+   * the end of the section anyway. */
+  return { start, end: start + 0x1000 };
 };
 
 const bindImageSymbols = (text: string): { text: string; bound: number; unbound: string[] } => {
@@ -248,15 +300,90 @@ const applyConventions = (text: string): { text: string; used: string | null } =
   return { text: result, used };
 };
 
+/*
+ * Declarations for the globals a function reads, bound to their real addresses in
+ * the mapped image - which is the only correct home for them: original and ported
+ * code have to share the same storage, and the name already says where it is. The
+ * width and the integer/float distinction come from the machine code
+ * (image_globals.ts); a type the instructions cannot express - a pointer to an
+ * interface, say - comes from the manifest.
+ */
+const declareGlobals = (
+  entry: Entry,
+  names: string[],
+  exe: string | null,
+  addresses: number[],
+): { lines: string[]; unresolved: string[] } => {
+  const lines: string[] = [];
+  const unresolved: string[] = [];
+  const overrides = entry.globals ?? {};
+  let recovered = new Map<number, GlobalType>();
+
+  const needsRecovery = names.some((name) => {
+    const address = addressOfSymbol(name);
+    return address !== null && overrides[`0x${address.toString(16)}`] === undefined;
+  });
+
+  if (needsRecovery && exe) {
+    const extent = functionExtent(addresses, entry.addressValue);
+    const result = recoverImageGlobals(exe, extent.start, extent.end);
+    if (result.error) console.error(`  ${entry.symbol}: ${result.error}`);
+    recovered = result.globals;
+  }
+
+  for (const name of names) {
+    const address = addressOfSymbol(name);
+    if (address === null) {
+      unresolved.push(`${name} (no address in the name)`);
+      continue;
+    }
+    const override = overrides[`0x${address.toString(16)}`];
+    if (override) {
+      lines.push(
+        `#define ${name} (*(${override.replace(/\s+\*/g, " *").trim()} *)0x${
+          address.toString(16).padStart(8, "0")
+        }u)`,
+      );
+      continue;
+    }
+    if (!exe) {
+      unresolved.push(`${name} (needs --exe to recover its width)`);
+      continue;
+    }
+    const type = recovered.get(address);
+    if (!type || !type.cType) {
+      unresolved.push(`${name} (the code does not say how wide it is)`);
+      continue;
+    }
+    if (type.sizes.length > 1) {
+      unresolved.push(
+        `${name} (touched at ${type.sizes.sort().join(" and ")} bytes - Ghidra's ` +
+          `overlap warning, needs a union)`,
+      );
+      continue;
+    }
+    lines.push(declarationFor(name, type));
+  }
+  return { lines, unresolved };
+};
+
 const normaliseSource = (
   entry: Entry,
   sourcePath: string,
+  exe: string | null,
+  addresses: number[],
 ): { text: string; used: string | null; bound: number; unbound: string[] } => {
   const original = Deno.readTextFileSync(sourcePath);
   const { text: converted, used } = applyConventions(original);
-  const { text: linked, bound, unbound } = bindImageSymbols(fixLargeIntegerFields(converted));
+  const { text: linked, bound, unbound: bare } = bindImageSymbols(fixLargeIntegerFields(converted));
   const body = linked;
   const fileName = sourcePath.split("/").pop() ?? sourcePath;
+  const { lines: globalLines, unresolved: unbound } = declareGlobals(
+    entry,
+    bare,
+    exe,
+    addresses,
+  );
 
   const header = [
     "/*",
@@ -269,6 +396,16 @@ const normaliseSource = (
     " * or the manifest instead.",
     " */",
     "#include <nfsu2/ghidra_types.h>",
+    /*
+     * Renderer functions reach D3D9 through a typed vtable, so they need the ABI
+     * keystone header - which is also the only correct way to get those types
+     * here, since it is what reconciles Wine's STDMETHODCALLTYPE with DXVK
+     * Native's cdecl one (see include/nfsu2/d3d9_native.h). Included only when the
+     * function actually mentions a D3D9 interface.
+     */
+    ...(/\bIDirect3D/.test(body) || globalLines.some((line) => /IDirect3D/.test(line))
+      ? ["#include <nfsu2/d3d9_native.h>"]
+      : []),
     '#include "game_functions.h"',
     // After game_functions.h, which pulls in windows.h: Wine's NT_TIB has a
     // member called ExceptionList, so the macro must not be defined first.
@@ -284,6 +421,15 @@ const normaliseSource = (
         "/* Image addresses below are bound to literals (see",
         " * tools/import_decompiled.ts); some land in `undefined4` slots. */",
         '#pragma GCC diagnostic ignored "-Wint-conversion"',
+        "",
+      ]
+      : []),
+    ...(globalLines.length > 0
+      ? [
+        "/* Game globals, bound to their addresses in the mapped image. Widths and",
+        " * float-ness recovered from the instructions that touch them; see",
+        " * tools/image_globals.ts. */",
+        ...globalLines,
         "",
       ]
       : []),
@@ -390,6 +536,12 @@ const main = (): number => {
   };
 
   const decompiled = option("--decompiled", `${REPO}/decompiled`);
+  /*
+   * The exe is only needed to recover the width of untyped globals, from the
+   * instructions that touch them. Nothing is read out of it into the repo, and a
+   * manifest whose functions have no such globals does not need it at all.
+   */
+  const exe = option("--exe", Deno.env.get("NFSU2_EXE") ?? "") || null;
   const { functions, excluded } = parseManifest();
 
   if (wants("--list")) {
@@ -432,6 +584,18 @@ const main = (): number => {
 
   Deno.mkdirSync(OUT_DIR, { recursive: true });
 
+  /*
+   * Every decompiled function's address, sorted: one file per function named
+   * after its address makes this an exact function map, which is how the width
+   * recovery knows where a function ends.
+   */
+  const addresses: number[] = [];
+  for (const item of Deno.readDirSync(decompiled)) {
+    const match = /^([0-9a-f]{8})_/.exec(item.name);
+    if (match) addresses.push(parseInt(match[1], 16));
+  }
+  addresses.sort((a, b) => a - b);
+
   const declarations: Array<[Entry, string]> = [];
   const missing: Entry[] = [];
   const untyped: Array<[Entry, string[]]> = [];
@@ -444,7 +608,7 @@ const main = (): number => {
       continue;
     }
 
-    const { text, used, bound, unbound } = normaliseSource(entry, source);
+    const { text, used, bound, unbound } = normaliseSource(entry, source, exe, addresses);
     if (unbound.length > 0) {
       untyped.push([entry, unbound]);
       continue;
@@ -484,15 +648,19 @@ const main = (): number => {
     console.log(
       `\n${untyped.length} entr${
         untyped.length === 1 ? "y" : "ies"
-      } read a global whose type Ghidra did not commit to:`,
+      } touch a global this cannot type:`,
     );
     for (const [entry, names] of untyped) {
-      console.log(`  ${entry.address} ${entry.symbol}: ${names.join(", ")}`);
+      console.log(`  ${entry.address} ${entry.symbol}`);
+      for (const name of names) console.log(`      ${name}`);
     }
     console.log(
-      "Give those addresses a type in Ghidra and re-export; the importer will not\n" +
-        "guess their width. Only the address-of form (&LAB_..., &PTR_...) is bound\n" +
-        "automatically, because there the address alone is the whole value.",
+      exe
+        ? "Widths come from the instructions that touch each address; where those\n" +
+          "disagree, or where the type is not something an instruction can express,\n" +
+          "put it in the manifest entry's `globals:` map."
+        : "Pass --exe <speed2.exe> (or set NFSU2_EXE) so widths can be recovered from\n" +
+          "the machine code, or give the types in the manifest entry's `globals:` map.",
     );
     return 1;
   }

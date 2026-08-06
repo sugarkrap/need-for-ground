@@ -110,6 +110,13 @@ const compileOne = async (path: string, wineHeaders: string): Promise<string | n
     const command = new Deno.Command("gcc", {
       args: [
         "-m32",
+        // The same C dialect the build uses (project default_options in
+        // meson.build). It matters more than it looks: GCC 15+ defaults to C23,
+        // where `void f()` means `void f(void)` rather than "parameters
+        // unspecified", so Ghidra's `typedef void code();` plus its
+        // `(*(code *)x)(a, b)` vtable calls become "too many arguments" errors -
+        // a portability failure invented by the survey rather than found by it.
+        "-std=gnu11",
         "-c",
         "-o",
         "/dev/null",

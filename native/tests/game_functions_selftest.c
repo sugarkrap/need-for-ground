@@ -21,6 +21,9 @@
  * Exits 77 (meson SKIP) when the generated functions are absent.
  */
 #include <nfsu2/ghidra_types.h>
+/* The renderer test builds a fake IDirect3DDevice9, so it needs the same ABI
+ * keystone header the generated renderer code does. */
+#include <nfsu2/d3d9_native.h>
 #include <nfsu2/pe_loader.h>
 #include <nfsu2/seh.h>
 #include <nfsu2/teb.h>
@@ -30,6 +33,7 @@
 
 #include <errno.h>
 #include <math.h>
+#include <stddef.h>
 #include <setjmp.h>
 #include <signal.h>
 #include <sys/wait.h>
@@ -475,6 +479,181 @@ static void test_teb(const struct nfsu2_pe_image *image)
     }
 }
 
+/* --- a renderer function, against a fake device ---------------------------- */
+
+/*
+ * The first function from the renderer scope (../../DIRECTX_SCOPE.md), and the
+ * pattern the other 98 need: it writes game globals and calls D3D9 through a
+ * device pointer held in a global.
+ *
+ * Both of those are now portable. The globals are bound to their addresses in the
+ * mapped image, so the ported copy and the original write the *same storage* -
+ * which is what makes comparing them meaningful, and what hybrid execution needs
+ * anyway. The device is a fake: an object whose vtable has one real entry, so the
+ * call can be checked without a GPU, without DXVK, and without a device that has
+ * any state to disturb.
+ *
+ * The two sides need *different* fake vtables, and that is the finding worth
+ * keeping from this test. MSVC compiled the original against Windows' COM ABI,
+ * where methods are __stdcall and the callee pops. Our ported copy is compiled
+ * against DXVK Native's headers, where STDMETHODCALLTYPE is empty and methods are
+ * __cdecl (see include/nfsu2/d3d9_native.h). Both are correct for their own side;
+ * they simply cannot share one vtable. The consequence for the port as a whole:
+ * once ported renderer code talks to DXVK it is calling the right ABI directly,
+ * but any *original* renderer code still in the process needs a stdcall-to-cdecl
+ * shim in front of the device - not the same pointer.
+ */
+struct render_state_call {
+    void *device;
+    DWORD state;
+    DWORD value;
+};
+
+static struct render_state_call g_render_calls[8];
+static int g_render_call_count;
+
+static void note_render_state(void *device, DWORD state, DWORD value)
+{
+    if (g_render_call_count < 8) {
+        g_render_calls[g_render_call_count].device = device;
+        g_render_calls[g_render_call_count].state = state;
+        g_render_calls[g_render_call_count].value = value;
+    }
+    g_render_call_count++;
+}
+
+/* __cdecl: DXVK Native's COM ABI, which is what the ported copy calls. */
+static HRESULT ported_set_render_state(IDirect3DDevice9 *device, D3DRENDERSTATETYPE state,
+                                      DWORD value)
+{
+    note_render_state(device, (DWORD)state, value);
+    return D3D_OK;
+}
+
+/* __stdcall: Windows' COM ABI, which is what the original machine code calls. */
+static HRESULT __attribute__((stdcall)) original_set_render_state(IDirect3DDevice9 *device,
+                                                                 D3DRENDERSTATETYPE state,
+                                                                 DWORD value)
+{
+    note_render_state(device, (DWORD)state, value);
+    return D3D_OK;
+}
+
+/* The globals this function writes, in the order the decompilation writes them. */
+static const unsigned int g_renderer_globals[] = {
+    0x873370, 0x873374, 0x873378, 0x87337c,
+    0x8763c0, 0x8763c4, 0x8763c8, 0x8763cc,
+    0x870750, 0x87074c,
+};
+
+static void read_globals(unsigned int *out)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof(g_renderer_globals) / sizeof(g_renderer_globals[0]); i++)
+        out[i] = *(volatile unsigned int *)(uintptr_t)g_renderer_globals[i];
+}
+
+static void clear_globals(void)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof(g_renderer_globals) / sizeof(g_renderer_globals[0]); i++)
+        *(volatile unsigned int *)(uintptr_t)g_renderer_globals[i] = 0xcdcdcdcdu;
+}
+
+static void test_renderer_function(const struct nfsu2_pe_image *image)
+{
+    nfsu2_original_FUN_005b7a30 original = NFSU2_ORIGINAL(FUN_005b7a30, image);
+    IDirect3DDevice9Vtbl vtable;
+    IDirect3DDevice9 device;
+    IDirect3DDevice9 **device_slot = (IDirect3DDevice9 **)(uintptr_t)0x870974u;
+    undefined4 matrix[16];
+    int object[1];
+    unsigned int after_original[10];
+    unsigned int after_ported[10];
+    undefined4 original_result;
+    undefined4 ported_result;
+    struct render_state_call original_call;
+    int original_calls;
+    size_t i;
+
+    printf("\n# a renderer function: ported vs original, against a fake device\n");
+
+    /*
+     * The offset the original's machine code uses - `call DWORD PTR [ecx+0xe4]` -
+     * has to be where Wine's header puts SetRenderState, or the fake vtable would
+     * be answering a different method than the one the game asked for.
+     */
+    CHECK(offsetof(IDirect3DDevice9Vtbl, SetRenderState) == 0xe4,
+          "SetRenderState is at vtable offset 0x%x, which is the offset the "
+          "original calls through", (unsigned)offsetof(IDirect3DDevice9Vtbl, SetRenderState));
+    CHECK(original != NULL, "resolved the original renderer function");
+    if (!original)
+        return;
+
+    for (i = 0; i < 16; i++)
+        matrix[i] = (undefined4)(0x1000u + i);
+    object[0] = (int)(uintptr_t)matrix;
+
+    memset(&vtable, 0, sizeof(vtable));
+    device.lpVtbl = &vtable;
+    *device_slot = &device;
+    CHECK(*device_slot == &device,
+          "the device-pointer global at 0x870974 is writable in the mapped image");
+
+    /* The original first, through a __stdcall entry. */
+    *(void **)&vtable.SetRenderState = (void *)original_set_render_state;
+    clear_globals();
+    g_render_call_count = 0;
+    original_result = original(object);
+    original_calls = g_render_call_count;
+    original_call = g_render_calls[0];
+    read_globals(after_original);
+
+    CHECK(original_calls == 1, "the original made one SetRenderState call (%d)",
+          original_calls);
+    CHECK(original_calls >= 1 && original_call.device == &device,
+          "with our fake device as `this` - COM's first argument");
+    /* 0xe in the decompilation, which is D3DRS_ZWRITEENABLE - checked against the
+     * header's enum rather than against a name read off the number by eye, which
+     * is how the manifest note came to say FOGENABLE at first. */
+    CHECK(original_calls >= 1 && original_call.state == D3DRS_ZWRITEENABLE &&
+          original_call.value == 0,
+          "SetRenderState(D3DRS_ZWRITEENABLE=%d, 0) - state %lu, value %lu",
+          (int)D3DRS_ZWRITEENABLE, (unsigned long)original_call.state,
+          (unsigned long)original_call.value);
+
+    /* Then the ported copy, through a __cdecl entry. */
+    *(void **)&vtable.SetRenderState = (void *)ported_set_render_state;
+    clear_globals();
+    g_render_call_count = 0;
+    ported_result = FUN_005b7a30(object);
+    read_globals(after_ported);
+
+    CHECK(g_render_call_count == original_calls,
+          "the ported copy made the same number of calls (%d)", g_render_call_count);
+    CHECK(g_render_call_count >= 1 &&
+          g_render_calls[0].device == original_call.device &&
+          g_render_calls[0].state == original_call.state &&
+          g_render_calls[0].value == original_call.value,
+          "with identical arguments");
+    CHECK(ported_result == original_result, "the same return value (%lu)",
+          (unsigned long)ported_result);
+    CHECK(memcmp(after_original, after_ported, sizeof(after_original)) == 0,
+          "and all %zu globals hold identical values afterwards",
+          sizeof(after_original) / sizeof(after_original[0]));
+    g_differential_checks++;
+
+    /* Worth naming what those globals got, since it is the function's real work:
+     * column 0 and column 1 of the matrix, with a zeroed w. */
+    CHECK(after_ported[0] == 0x1000 && after_ported[1] == 0x1004 &&
+          after_ported[2] == 0x1008 && after_ported[3] == 0,
+          "the first vector is (m[0], m[4], m[8], 0) as the decompilation says");
+
+    *device_slot = NULL;
+}
+
 /* --- SEH: our dispatcher calling the game's own handler -------------------- */
 
 /*
@@ -796,6 +975,7 @@ int main(int argc, char **argv)
         test_hybrid_execution(&image);
         test_teb(&image);
         test_seh_through_original_handler(&image);
+        test_renderer_function(&image);
         test_against_original(&image);
         printf("\n     %d differential comparisons against original code\n",
                g_differential_checks);
