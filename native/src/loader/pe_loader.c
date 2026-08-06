@@ -9,6 +9,7 @@
  */
 #include <nfsu2/pe_loader.h>
 
+#include <dlfcn.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <fcntl.h>
@@ -42,6 +43,18 @@
 #define SECTION_RAW_POINTER     0x14
 #define SECTION_CHARACTERISTICS 0x24
 
+/* Data directory 1 is the import table; each entry is a VA/size pair. */
+#define OPT_DATA_DIRECTORY      0x60
+#define DIRECTORY_ENTRY_IMPORT  1
+
+/* IMAGE_IMPORT_DESCRIPTOR */
+#define IMPORT_ORIGINAL_FIRST_THUNK 0x00
+#define IMPORT_NAME                 0x0c
+#define IMPORT_FIRST_THUNK          0x10
+#define IMPORT_DESCRIPTOR_SIZE      20
+
+#define IMAGE_ORDINAL_FLAG      0x80000000u
+
 #define IMAGE_FILE_MACHINE_I386 0x014c
 #define PE32_MAGIC              0x010b
 
@@ -74,6 +87,7 @@ int nfsu2_pe_load(const char *path, struct nfsu2_pe_image *out, char *error, siz
     struct stat st;
     int fd;
     unsigned int pe_offset, section_table, image_base, image_size, page_size;
+    unsigned int import_directory = 0;
     unsigned short section_count, optional_size;
     void *mapping;
     int i;
@@ -123,6 +137,8 @@ int nfsu2_pe_load(const char *path, struct nfsu2_pe_image *out, char *error, siz
         image_base = read32(opt + OPT_IMAGE_BASE);
         image_size = read32(opt + OPT_SIZE_OF_IMAGE);
         out->entry_point = image_base + read32(opt + OPT_ENTRY_POINT);
+        import_directory = read32(opt + OPT_DATA_DIRECTORY
+          + DIRECTORY_ENTRY_IMPORT * 8);
     }
     section_table = pe_offset + 4 + COFF_HEADER_SIZE + optional_size;
 
@@ -207,7 +223,175 @@ int nfsu2_pe_load(const char *path, struct nfsu2_pe_image *out, char *error, siz
     out->image_size = image_size;
     out->mapping = mapping;
     out->section_count = section_count;
+    out->import_directory = import_directory;
     return 0;
+}
+
+/* --- imports ------------------------------------------------------------ */
+
+static void (*g_import_reporter)(const char *library, const char *symbol);
+
+/*
+ * ws2_32's entry points are hidden on purpose (their names collide with libc's),
+ * so dlsym cannot see them, and the game imports most of Winsock by ordinal
+ * anyway. The shim provides an explicit table; weak, so a harness that does not
+ * link the sockets shim still builds.
+ */
+__attribute__((weak)) void *nfsu2_winsock_lookup(const char *name, unsigned ordinal);
+
+static int library_is(const char *library, const char *name)
+{
+    size_t i;
+
+    for (i = 0; library[i] && name[i]; i++) {
+        char a = library[i], b = name[i];
+
+        if (a >= 'A' && a <= 'Z')
+            a = (char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z')
+            b = (char)(b - 'A' + 'a');
+        if (a != b)
+            return 0;
+    }
+    return library[i] == name[i];
+}
+
+void nfsu2_pe_set_import_reporter(void (*reporter)(const char *library, const char *symbol))
+{
+    g_import_reporter = reporter;
+}
+
+/* Bounds-checked pointer to an RVA inside the mapped image. */
+static void *at_rva(const struct nfsu2_pe_image *image, unsigned int rva, size_t need)
+{
+    if (!rva || rva >= image->image_size || rva + need > image->image_size)
+        return NULL;
+    return (unsigned char *)image->mapping + rva;
+}
+
+int nfsu2_pe_resolve_imports(struct nfsu2_pe_image *image, struct nfsu2_pe_import_stats *stats)
+{
+    struct nfsu2_pe_import_stats local = { 0, 0, 0, 0, 0 };
+    unsigned int page_size = (unsigned int)sysconf(_SC_PAGESIZE);
+    const unsigned char *descriptor;
+
+    if (!image || !image->mapping)
+        return -EINVAL;
+    if (!image->import_directory) {
+        if (stats)
+            *stats = local;
+        return 0; /* nothing to do; not an error */
+    }
+
+    descriptor = at_rva(image, image->import_directory, IMPORT_DESCRIPTOR_SIZE);
+    if (!descriptor)
+        return -EINVAL;
+
+    for (;; descriptor += IMPORT_DESCRIPTOR_SIZE) {
+        unsigned int lookup_rva = read32(descriptor + IMPORT_ORIGINAL_FIRST_THUNK);
+        unsigned int iat_rva = read32(descriptor + IMPORT_FIRST_THUNK);
+        unsigned int name_rva = read32(descriptor + IMPORT_NAME);
+        const char *library;
+        unsigned int *iat;
+        const unsigned char *lookup;
+        unsigned int index;
+
+        if (!lookup_rva && !iat_rva)
+            break; /* the terminating all-zero descriptor */
+
+        library = at_rva(image, name_rva, 1);
+        if (!library)
+            library = "(unnamed)";
+
+        /*
+         * The lookup table (OriginalFirstThunk) holds the names and the IAT holds
+         * the addresses. They start identical, but a bound import has the IAT
+         * pre-filled with addresses from another machine - so names must come
+         * from the lookup table when it exists, or they would be read as
+         * pointers.
+         */
+        lookup = at_rva(image, lookup_rva ? lookup_rva : iat_rva, 4);
+        iat = at_rva(image, iat_rva, 4);
+        if (!lookup || !iat)
+            return -EINVAL;
+
+        /*
+         * The IAT usually lives in read-only .rdata: on Windows the loader fills
+         * it in before applying protection. Ours applied protection already, so
+         * make the pages writable for the patch. They stay writable, which is
+         * what Windows does for an IAT the loader has touched anyway.
+         */
+        {
+            unsigned char *page = (unsigned char *)((uintptr_t)iat & ~(uintptr_t)(page_size - 1));
+            size_t span = (size_t)((unsigned char *)iat - page) + 4096u * 4u;
+
+            if (mprotect(page, span, PROT_READ | PROT_WRITE) != 0)
+                return -errno;
+        }
+
+        local.libraries++;
+
+        for (index = 0; ; index++) {
+            unsigned int entry = read32(lookup + (size_t)index * 4u);
+            const unsigned char *hint;
+            const char *symbol;
+            void *address;
+
+            if (!entry)
+                break;
+            local.total++;
+
+            if (entry & IMAGE_ORDINAL_FLAG) {
+                /* An ordinal has no name to look up; see win32/module.c. */
+                unsigned ordinal = entry & 0xffffu;
+                void *by_ordinal = NULL;
+
+                local.by_ordinal++;
+
+                if (nfsu2_winsock_lookup && library_is(library, "ws2_32.dll"))
+                    by_ordinal = nfsu2_winsock_lookup(NULL, ordinal);
+
+                if (by_ordinal) {
+                    iat[index] = (unsigned int)(uintptr_t)by_ordinal;
+                    local.resolved++;
+                    continue;
+                }
+
+                local.unresolved++;
+                if (g_import_reporter) {
+                    char text[32];
+
+                    snprintf(text, sizeof(text), "#%u (ordinal)", ordinal);
+                    g_import_reporter(library, text);
+                }
+                continue;
+            }
+
+            hint = at_rva(image, entry, 3);
+            if (!hint) {
+                local.unresolved++;
+                continue;
+            }
+            symbol = (const char *)hint + 2; /* skip the ordinal hint */
+
+            address = dlsym(RTLD_DEFAULT, symbol);
+            if (!address && nfsu2_winsock_lookup && library_is(library, "ws2_32.dll"))
+                address = nfsu2_winsock_lookup(symbol, 0);
+            if (!address) {
+                local.unresolved++;
+                if (g_import_reporter)
+                    g_import_reporter(library, symbol);
+                continue;
+            }
+
+            iat[index] = (unsigned int)(uintptr_t)address;
+            local.resolved++;
+        }
+    }
+
+    if (stats)
+        *stats = local;
+    return local.unresolved ? -ENOSYS : 0;
 }
 
 void nfsu2_pe_unload(struct nfsu2_pe_image *image)

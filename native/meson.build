@@ -208,11 +208,19 @@ if target_bits == 32 and fs.is_file(meson.current_source_dir() / game_generated 
                 '-Wno-unused-but-set-variable'],
       install : false)
 
+    # The shim has to be linked in *and* exported: resolving the loaded exe's IAT
+    # goes through dlsym(RTLD_DEFAULT, ...), so the Win32 entry points must be in
+    # this binary's dynamic symbol table - the same requirement GetProcAddress has.
     game_selftest = executable('nfsu2-game-functions-selftest',
       'tests/game_functions_selftest.c',
       link_with : [libnfsu2_game, libnfsu2_loader],
+      # user32 and dinput8 too when SDL is available: without them the exe's IAT
+      # cannot be filled for the windowing and input imports, and the coverage
+      # number would understate what the shim can actually satisfy.
+      dependencies : sdl2.found() ? [nfsu2_dinput8_dep] : [nfsu2_win32_dep],
       include_directories : [nfsu2_inc, wine_inc, game_inc],
       c_args : ['-D_GNU_SOURCE'],
+      export_dynamic : true,
       install : false)
     # NFSU2_EXE in the environment enables the differential half; without it the
     # test still verifies the ported code against references.

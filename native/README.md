@@ -364,14 +364,41 @@ because it missed a parameter; `__ftol` takes its argument on the x87 register
 stack, which has no C spelling at all; `__isnan` uses Ghidra's field-slice
 syntax on a `double`. Each needs a different fix, and none of them is generic.
 
+### Imports resolve, so original code can call the shim
+
+`nfsu2_pe_resolve_imports()` walks the import directory and points each IAT slot at
+our own implementation. On the unwrapped exe:
+
+```
+14 libraries, 251 imports: 249 resolved, 2 unresolved (21 by ordinal)
+  unresolved: d3d9.dll!Direct3DCreate9     (DXVK, not linked into this test)
+  unresolved: DSOUND.dll!#1 (ordinal)      (audio, genuinely not implemented)
+```
+
+The test then checks the thing that matters: an IAT slot really does hold the
+address of *our* `GetTickCount`. Unresolved slots are left alone and counted rather
+than filled with a stub, because a stub turns "this API is missing" into a crash
+somewhere unrelated.
+
+Three things had to be fixed to get from 188 to 249, and all three were the same
+hidden-visibility trap in different clothes:
+
+- **shell32** and **NTSYSAPI** (`RtlUnwind`) needed `_SHELL32_` and `_NTSYSTEM_`
+  adding to `win32_dllmacros.h`, exactly as kernel32 and user32 did.
+- **ws2_32 cannot use dlsym at all.** Its entry points are hidden *on purpose* -
+  exporting names like `socket` and `select` hijacks libc for the whole process -
+  so the loader consults an explicit table in the sockets shim via a weak symbol.
+- **ws2_32 is imported by ordinal**, not by name: 21 of the game's Winsock imports
+  have no name in the file at all. The same table carries ws2_32.dll's documented
+  ordinals, without which those 21 slots would stay empty.
+
 ### What comes next
 
 1. Widen the manifest. The renderer scope in `../DIRECTX_SCOPE.md` is the useful
    direction, since that is where the D3D9 boundary and both widescreen fixes
    already are.
-2. Teach the loader imports, so a ported function can call one that is not
-   ported yet - the shim already resolves names (`win32/module.c`), so this is
-   thunking the IAT, not new infrastructure.
+2. Call an original function that *uses* an import, end to end - the IAT is filled,
+   so this should now work, and it is the next thing to prove.
 3. The TEB and `%fs`. Any function with a `__try` block or a `__declspec(thread)`
    access reads glibc's TLS through `%fs` and misbehaves. Wine solves it with a
    custom LDT entry via `modify_ldt()`; that is the next real piece of work.

@@ -35,6 +35,10 @@
 #define _ADVAPI32_
 #define _WINMM_
 #define _GDI32_
+#define _SHELL32_
+/* RtlUnwind and friends are declared NTSYSAPI, which is DECLSPEC_IMPORT unless
+ * this is set - the same hidden-visibility trap as the others. */
+#define _NTSYSTEM_
 
 /*
  * _WS2_32_ is deliberately NOT defined, so the Winsock entry points keep Wine's

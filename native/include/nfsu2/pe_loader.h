@@ -12,14 +12,15 @@
  * bytes, zero-fills the tail where VirtualSize exceeds SizeOfRawData, and sets
  * per-section protection.
  *
- * What it deliberately does not do yet, because none of it is needed to call a
- * self-contained function, and each would be guesswork until something actually
- * requires it:
+ * Imports *are* resolved, on request: nfsu2_pe_resolve_imports() walks the import
+ * directory and points each IAT slot at our own shim, so original code can call
+ * CreateFileA and land in win32/file.c. That is what makes incremental porting
+ * possible - a ported function can call one that is not ported yet, and vice
+ * versa.
  *
- *   - imports. The import directory is not walked, so a function that calls a
- *     Win32 API through the IAT will jump to a zero. The shim it would need is
- *     already here (win32/module.c resolves names), so this is a small step when
- *     something needs it.
+ * What it deliberately does not do yet, because neither is needed to call a
+ * function and each would be guesswork until something requires it:
+ *
  *   - relocations. This exe has a fixed base and no .reloc, so mapping anywhere
  *     other than 0x400000 would break absolute addresses. The loader fails
  *     rather than relocating.
@@ -43,6 +44,7 @@ struct nfsu2_pe_image {
     unsigned int entry_point;  /* absolute VA of AddressOfEntryPoint */
     void *mapping;             /* what was mapped; == (void *)image_base */
     int section_count;
+    unsigned int import_directory; /* RVA of the import table, 0 if absent */
 };
 
 /*
@@ -60,5 +62,33 @@ void nfsu2_pe_unload(struct nfsu2_pe_image *image);
  * 0x43ce40) into a callable pointer. Returns NULL if it falls outside the image.
  */
 void *nfsu2_pe_function(const struct nfsu2_pe_image *image, unsigned int virtual_address);
+
+struct nfsu2_pe_import_stats {
+    int libraries;
+    int total;
+    int resolved;
+    int unresolved;
+    int by_ordinal;  /* ordinal imports, which cannot map to an ELF symbol */
+};
+
+/*
+ * Point every IAT slot at our shim, by name, via dlsym(RTLD_DEFAULT, ...) - the
+ * same mechanism GetProcAddress uses (see win32/module.c), which is why the
+ * per-DLL visibility macros in win32_dllmacros.h matter here too.
+ *
+ * Unresolved imports are left as they were and counted rather than faked: a slot
+ * pointing at a plausible-looking stub would turn "this API is missing" into a
+ * crash somewhere else entirely. Call nfsu2_pe_set_import_reporter() first to see
+ * which ones they are.
+ *
+ * Returns 0 if every named import resolved, -ENOSYS if some did not (the image is
+ * still usable - just not for code paths that need them), or another negative
+ * errno on a malformed import directory.
+ */
+int nfsu2_pe_resolve_imports(struct nfsu2_pe_image *image,
+                             struct nfsu2_pe_import_stats *stats);
+
+/* Called once per unresolved import, for diagnostics. NULL disables it. */
+void nfsu2_pe_set_import_reporter(void (*reporter)(const char *library, const char *symbol));
 
 #endif /* NFSU2_PE_LOADER_H */

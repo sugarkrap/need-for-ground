@@ -26,6 +26,7 @@
 #include "game_functions.h"
 #include "game_originals.h"
 
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -140,6 +141,68 @@ static void test_against_reference(void)
 }
 
 #pragma GCC diagnostic pop
+
+/* --- imports ------------------------------------------------------------- */
+
+static int g_unresolved;
+static char g_unresolved_list[24][64];
+
+static void report_unresolved(const char *library, const char *symbol)
+{
+    if (g_unresolved < 24) {
+        snprintf(g_unresolved_list[g_unresolved], sizeof(g_unresolved_list[0]),
+                 "%s!%s", library, symbol);
+    }
+    g_unresolved++;
+}
+
+/*
+ * Resolving the IAT is what makes incremental porting possible: original code can
+ * call our shim, so a ported function may call an unported one and vice versa.
+ */
+static void test_imports(struct nfsu2_pe_image *image)
+{
+    struct nfsu2_pe_import_stats stats;
+    int rc;
+    int i;
+
+    printf("\n# import resolution\n");
+
+    nfsu2_pe_set_import_reporter(report_unresolved);
+    rc = nfsu2_pe_resolve_imports(image, &stats);
+    nfsu2_pe_set_import_reporter(NULL);
+
+    printf("     %d libraries, %d imports: %d resolved, %d unresolved (%d by ordinal)\n",
+           stats.libraries, stats.total, stats.resolved, stats.unresolved, stats.by_ordinal);
+    for (i = 0; i < g_unresolved && i < 24; i++)
+        printf("     unresolved: %s\n", g_unresolved_list[i]);
+
+    CHECK(stats.libraries >= 10 && stats.total >= 200,
+          "walked the import directory: %d libraries, %d imports",
+          stats.libraries, stats.total);
+    CHECK(stats.resolved > 0, "resolved %d imports against our own shim", stats.resolved);
+    CHECK(rc == 0 || rc == -ENOSYS, "resolve returned a sane status (%d)", rc);
+
+    /*
+     * The decisive check: an IAT slot must now hold the address of *our* function.
+     * Anything else - a plausible stub, a leftover bound address - would turn a
+     * missing API into a crash somewhere unrelated.
+     */
+    {
+        unsigned int *iat = NULL;
+        unsigned int rva;
+        int found = 0;
+
+        /* KERNEL32's IAT, from the import directory dump; find GetTickCount's slot
+         * by looking for our own address in the kernel32 block. */
+        for (rva = 0x383000u; rva < 0x383500u && !found; rva += 4u) {
+            iat = (unsigned int *)((unsigned char *)image->mapping + rva);
+            if (*iat == (unsigned int)(uintptr_t)&GetTickCount)
+                found = 1;
+        }
+        CHECK(found, "an IAT slot points at our own GetTickCount (%p)", (void *)&GetTickCount);
+    }
+}
 
 /* --- 2. against the original machine code -------------------------------- */
 
@@ -312,6 +375,7 @@ int main(int argc, char **argv)
         printf("     base 0x%x, %u KiB, %d sections, entry 0x%x\n",
                image.image_base, image.image_size / 1024, image.section_count,
                image.entry_point);
+        test_imports(&image);
         test_against_original(&image);
         printf("\n     %d differential comparisons against original code\n",
                g_differential_checks);

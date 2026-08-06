@@ -160,6 +160,9 @@ and five functions are ported and verified two ways: against libc and a
 recomputation, and against the original machine code, which
 `native/src/loader/pe_loader.c` maps into the same process so both can be called
 with identical inputs. 282 differential comparisons, all identical.
+The PE loader also resolves the exe's imports - 249 of 251 IAT slots point at our
+shim - so original code can call it, which is what makes porting incremental.
+
 `deno task survey` measures the rest: ~70% of decompiled functions compile as-is
 with the `ghidra_types.h` harness.
 

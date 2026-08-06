@@ -787,3 +787,68 @@ UCHAR WINAPI Netbios(PNCB ncb)
         ncb->ncb_retcode = NRC_NOWILD;
     return NRC_NOWILD;
 }
+
+
+/* --- lookup for the PE loader ------------------------------------------- */
+
+/*
+ * These entry points are deliberately hidden (see nfsu2/win32_dllmacros.h: their
+ * names collide with libc's, and exporting them hijacks libc for every shared
+ * library in the process), so the loader cannot find them with dlsym. It calls
+ * this instead.
+ *
+ * The ordinals are ws2_32.dll's documented, stable ones - the game imports most of
+ * Winsock by ordinal rather than by name, which is normal for ws2_32 and means a
+ * name-only resolver would leave 21 slots empty.
+ */
+struct winsock_export {
+    const char *name;
+    unsigned ordinal;
+    void *address;
+};
+
+static const struct winsock_export g_winsock_exports[] = {
+    { "accept",           1,   (void *)accept },
+    { "bind",             2,   (void *)bind },
+    { "closesocket",      3,   (void *)closesocket },
+    { "connect",          4,   (void *)connect },
+    { "getpeername",      5,   (void *)getpeername },
+    { "getsockname",      6,   (void *)getsockname },
+    { "getsockopt",       7,   (void *)getsockopt },
+    { "htonl",            8,   (void *)htonl },
+    { "htons",            9,   (void *)htons },
+    { "ioctlsocket",      10,  (void *)ioctlsocket },
+    { "inet_addr",        11,  (void *)inet_addr },
+    { "inet_ntoa",        12,  (void *)inet_ntoa },
+    { "listen",           13,  (void *)listen },
+    { "ntohl",            14,  (void *)ntohl },
+    { "ntohs",            15,  (void *)ntohs },
+    { "recv",             16,  (void *)recv },
+    { "recvfrom",         17,  (void *)recvfrom },
+    { "select",           18,  (void *)select },
+    { "send",             19,  (void *)send },
+    { "sendto",           20,  (void *)sendto },
+    { "setsockopt",       21,  (void *)setsockopt },
+    { "shutdown",         22,  (void *)shutdown },
+    { "socket",           23,  (void *)socket },
+    { "gethostbyname",    52,  (void *)gethostbyname },
+    { "WSAGetLastError",  111, (void *)WSAGetLastError },
+    { "WSASetLastError",  112, (void *)WSASetLastError },
+    { "WSAStartup",       115, (void *)WSAStartup },
+    { "WSACleanup",       116, (void *)WSACleanup },
+    { "__WSAFDIsSet",     151, (void *)__WSAFDIsSet },
+    { "WSAIoctl",         0,   (void *)WSAIoctl },
+};
+
+void *nfsu2_winsock_lookup(const char *name, unsigned ordinal)
+{
+    size_t i;
+
+    for (i = 0; i < sizeof(g_winsock_exports) / sizeof(g_winsock_exports[0]); i++) {
+        if (name && g_winsock_exports[i].name && !strcmp(name, g_winsock_exports[i].name))
+            return g_winsock_exports[i].address;
+        if (!name && ordinal && g_winsock_exports[i].ordinal == ordinal)
+            return g_winsock_exports[i].address;
+    }
+    return NULL;
+}
