@@ -288,11 +288,44 @@ That narrows it to the swapchain blit pipeline or its descriptor - not to
 addresses, sizes, indices, synchronisation of our own rendering, or anything this
 repo controls.
 
-**What would settle it:** the Vulkan validation layers, which are not installed
-here (`lib32-vulkan-validation-layers` on Arch, since the target is 32-bit). A
-missing or wrong image-layout transition on the source image is the obvious
-candidate and is exactly what validation reports by name. Failing that, a frame
-capture would show whether the blit draw produces fragments at all.
+### Validation is clean, which rules out the obvious cause
+
+With `lib32-vulkan-validation-layers` installed, core validation, **synchronisation**
+validation and best-practices all run clean under `DXVK_DEBUG=validation`: no
+image-layout errors, no sync hazards, only cosmetic notes about D3D-oriented
+extensions and one `accessMask` nit on the present barrier. So DXVK's Vulkan usage
+is correct, and the missing-barrier theory is dead.
+
+Note the manifest wrinkle: Arch's `lib32-vulkan-validation-layers` ships only the
+library, and the JSON layer manifest comes from the 64-bit package. Without it the
+loader silently cannot find the layer and DXVK reports "Validation layers not
+found". Writing a one-off manifest and pointing `VK_LAYER_PATH` at it works:
+
+```sh
+VK_LAYER_PATH=/path/with/VkLayer_khronos_validation.json \
+  VK_LAYER_VALIDATE_SYNC=1 DXVK_DEBUG=validation ./build32/nfsu2-smoke-d3d9 --frames 15
+```
+
+An app-side ordering problem is ruled out too: `--sync-each-frame` forces a full
+flush and wait (via a one-pixel readback) before every Present, and the window
+stays black.
+
+### Where that leaves it
+
+Valid Vulkan, correct indices, correct rects, correct source and destination
+images, a draw that is definitely issued, no sync hazard, and a HUD drawn into the
+same attachment that *is* visible - yet the blit contributes nothing, except in
+roughly one frame in ten when the swapchain has more images. That combination is
+not explicable from outside DXVK, and every hypothesis reachable from here has been
+tested and failed.
+
+The one experiment left that would split it cleanly: read the swapchain image back
+*inside* DXVK, after `performDraw` and the HUD pass, and dump it. If that image
+contains the colour, the fault is in presentation/compositing below DXVK (this is a
+Wayland session with the NVIDIA driver via XWayland); if it does not, the blit draw
+genuinely produces no fragments. That needs a staging buffer and a submit-and-wait
+inside the blitter - a couple of hours, and the right thing to hand upstream with
+it.
 
 One real bug in our own code was found along the way and fixed: the game-shaped
 host never reset the device on `WM_SIZE`, so Alt+Enter left a 1600x900 backbuffer

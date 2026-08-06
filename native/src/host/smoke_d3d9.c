@@ -42,6 +42,13 @@ int main(int argc, char **argv)
     int backbuffer_width = 0, backbuffer_height = 0;
     int immediate = 0;
     int present_workaround = 0;
+    /*
+     * Force the rendering to be flushed and waited for before Present, by reading
+     * one pixel back. If the window then shows content consistently, the black
+     * window is an ordering problem between the app's rendering and DXVK's
+     * swapchain blit - not a missing barrier, which validation has now ruled out.
+     */
+    int sync_each_frame = 0;
     int i;
     SDL_Window *window;
     IDirect3D9 *d3d = NULL;
@@ -69,6 +76,8 @@ int main(int argc, char **argv)
             immediate = 1;
         else if (!strcmp(argv[i], "--present-workaround"))
             present_workaround = 1;
+        else if (!strcmp(argv[i], "--sync-each-frame"))
+            sync_each_frame = 1;
         else if (!strcmp(argv[i], "--backbuffer") && i + 2 < argc) {
             backbuffer_width = parse_int(argv[++i], 0);
             backbuffer_height = parse_int(argv[++i], 0);
@@ -209,6 +218,12 @@ int main(int argc, char **argv)
                                colour, 1.0f, 0);
         IDirect3DDevice9_BeginScene(device);
         IDirect3DDevice9_EndScene(device);
+        if (sync_each_frame) {
+            unsigned char probe[4];
+
+            nfsu2_capture_pixel(device, 0, 0, probe);
+        }
+
         hr = IDirect3DDevice9_Present(device, NULL, NULL, NULL, NULL);
         if (FAILED(hr)) {
             fprintf(stderr, "Present failed: 0x%08lx\n", (unsigned long)hr);

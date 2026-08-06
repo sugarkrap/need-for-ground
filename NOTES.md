@@ -298,10 +298,26 @@ while the HUD - drawn into the *same* attachment straight afterwards - appears.
 Both shader variants (`needsBlit` and not) behave identically.
 
 That puts it in the swapchain blit pipeline or its descriptor, and rules out
-everything on this side. Settling it needs the Vulkan validation layers, which are
-not installed on this machine (`lib32-vulkan-validation-layers`, since the target
-is 32-bit): a missing image-layout transition on the source image is the obvious
-candidate and is precisely what validation names.
+everything on this side.
+
+The validation layers then ruled out the obvious cause too. Core validation,
+synchronisation validation and best-practices all run clean under
+`DXVK_DEBUG=validation` - no layout errors, no sync hazards - so DXVK's Vulkan
+usage is correct and the missing-barrier theory is dead. (Arch's
+`lib32-vulkan-validation-layers` ships only the library; the JSON manifest comes
+from the 64-bit package, and without it the loader silently cannot find the layer.
+A one-off manifest plus `VK_LAYER_PATH` works.) An app-side ordering problem is out
+as well: forcing a flush and wait before every Present, via a one-pixel readback
+(`--sync-each-frame`), leaves the window black.
+
+So: valid Vulkan, correct indices, correct rects, correct images, a draw that is
+issued, no sync hazard, and a HUD into the same attachment that *is* visible - yet
+the blit contributes nothing, except in about one frame in ten when the swapchain
+has more images. Every hypothesis reachable from outside DXVK has now been tested
+and failed. The experiment that would split it: read the swapchain image back
+inside DXVK after the blit and the HUD pass. Colour present means the fault is in
+presentation/compositing below DXVK (Wayland session, NVIDIA, XWayland); colour
+absent means the blit draw emits no fragments.
 
 Two lessons worth keeping. A frame counter is not evidence that anything is on
 screen - the readback path exists so that claim can be checked. And "one capture
