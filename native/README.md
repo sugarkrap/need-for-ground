@@ -260,10 +260,39 @@ frame in ten - measured over ten captures a quarter-second apart. So the
 presented images are real and only some contain our rendering. That points at
 swapchain image handling in DXVK Native, not at the blit, and not at this repo.
 
-It is deliberately not on by default: a flashing window is worse than a black
-one. Next steps if picking this up: build DXVK with debug symbols and watch which
-swapchain image index is acquired versus rendered into, and try the GLFW WSI
-backend to see whether the SDL2 path is specifically involved.
+It is deliberately not on by default: a flashing window is worse than a black one.
+
+### Where it has been traced to
+
+DXVK's own present path was instrumented (log lines in `UpdatePresentRegion`,
+`Presenter::acquireNextImage`, `Presenter::presentImage` and
+`DxvkSwapchainBlitter::performDraw`, rebuilt in place; the probes are reverted, so
+re-adding them is a five-minute job). What that showed, per frame:
+
+```
+UpdatePresentRegion: window=1000x600 src=0,0 1000x600 dst=0,0 1000x600 windowed=1
+acquire:     index=4 image=1461585112 frameIndex=0
+performDraw: dstImage=1461585112 srcImage=1460793176 composite=0 needsBlit=0
+present:     index=4 image=1461585112
+```
+
+Everything a caller controls is correct: the present rects are the full window,
+the image DXVK draws into is exactly the image it presents, the source is the
+D3D9 backbuffer that readback proves holds our pixels, and no rect is degenerate
+(`performDraw`'s early-out never fires). So the blit *draw* is issued with correct
+inputs and produces nothing - while the HUD, drawn into the *same* attachment
+immediately afterwards in the same render pass, appears. Both the `needsBlit` and
+non-`needsBlit` shader variants behave the same way, so it is not one bad variant.
+
+That narrows it to the swapchain blit pipeline or its descriptor - not to
+addresses, sizes, indices, synchronisation of our own rendering, or anything this
+repo controls.
+
+**What would settle it:** the Vulkan validation layers, which are not installed
+here (`lib32-vulkan-validation-layers` on Arch, since the target is 32-bit). A
+missing or wrong image-layout transition on the source image is the obvious
+candidate and is exactly what validation reports by name. Failing that, a frame
+capture would show whether the blit draw produces fragments at all.
 
 One real bug in our own code was found along the way and fixed: the game-shaped
 host never reset the device on `WM_SIZE`, so Alt+Enter left a 1600x900 backbuffer

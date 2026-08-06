@@ -286,6 +286,23 @@ black one - but `--present-workaround` on either host turns it on for diagnosis.
 Environment: Wayland session, NVIDIA 610.43.03, DXVK Native 3.0.2, both -m32 and
 -m64, vsync and immediate, SDL2's wayland and x11 backends.
 
+Traced further by instrumenting DXVK itself (probes in `UpdatePresentRegion`,
+`Presenter::acquireNextImage`/`presentImage` and
+`DxvkSwapchainBlitter::performDraw`). Per frame, everything a caller controls is
+correct: present rects are the full window (`dst=0,0 1000x600`), the image drawn
+into is exactly the image presented (`acquire index=4 image=X`, `performDraw
+dstImage=X`, `present index=4 image=X`), the source is the D3D9 backbuffer that
+readback proves holds our pixels, and `performDraw`'s degenerate-rect early-out
+never fires. So the blit draw is issued with correct inputs and produces nothing,
+while the HUD - drawn into the *same* attachment straight afterwards - appears.
+Both shader variants (`needsBlit` and not) behave identically.
+
+That puts it in the swapchain blit pipeline or its descriptor, and rules out
+everything on this side. Settling it needs the Vulkan validation layers, which are
+not installed on this machine (`lib32-vulkan-validation-layers`, since the target
+is 32-bit): a missing image-layout transition on the source image is the obvious
+candidate and is precisely what validation names.
+
 Two lessons worth keeping. A frame counter is not evidence that anything is on
 screen - the readback path exists so that claim can be checked. And "one capture
 showed the right colour" is not evidence that something is fixed: the first
