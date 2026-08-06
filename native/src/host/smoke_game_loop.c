@@ -25,11 +25,16 @@
 #include <string.h>
 
 static IDirect3DDevice9 *g_device;
+static D3DPRESENT_PARAMETERS g_present;
 static int g_running = 1;
 static int g_frames_presented;
 static int g_keys_seen;
 static int g_mouse_moves_seen;
 static int g_activate_seen;
+/* Set by WM_SIZE, acted on in the frame loop - resetting a device from inside a
+ * message handler would do it in the middle of a frame. */
+static int g_pending_width;
+static int g_pending_height;
 
 static LRESULT WINAPI window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
@@ -51,10 +56,25 @@ static LRESULT WINAPI window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
         g_activate_seen++;
         printf("wndproc    : WM_ACTIVATEAPP active=%d\n", (int)wparam);
         return 0;
-    case WM_SIZE:
-        printf("wndproc    : WM_SIZE %dx%d\n", (int)(lparam & 0xffff),
-               (int)((lparam >> 16) & 0xffff));
+    case WM_SIZE: {
+        int width = (int)(lparam & 0xffff);
+        int height = (int)((lparam >> 16) & 0xffff);
+
+        printf("wndproc    : WM_SIZE %dx%d%s\n", width, height,
+               wparam == SIZE_MINIMIZED ? " (minimised)" : "");
+        /*
+         * A resize means the backbuffer no longer matches the window. Without a
+         * Reset the swapchain and the backbuffer disagree about size and the
+         * window goes black - which is exactly what Alt+Enter produced before
+         * this was handled. Queued rather than done here: Reset must not happen
+         * part-way through a frame.
+         */
+        if (wparam != SIZE_MINIMIZED && width > 0 && height > 0) {
+            g_pending_width = width;
+            g_pending_height = height;
+        }
         return 0;
+    }
     case WM_CLOSE:
         printf("wndproc    : WM_CLOSE\n");
         g_running = 0;
@@ -79,6 +99,7 @@ int main(int argc, char **argv)
 {
     int width = 1280, height = 720, frames = 180;
     int i;
+    int immediate = 0;
     WNDCLASSEXA cls;
     HWND hwnd;
     IDirect3D9 *d3d;
@@ -94,8 +115,11 @@ int main(int argc, char **argv)
             height = parse_int(argv[++i], height);
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc)
             frames = parse_int(argv[++i], frames);
+        else if (!strcmp(argv[i], "--immediate"))
+            immediate = 1;
         else {
-            fprintf(stderr, "usage: %s [--width N] [--height N] [--frames N]\n", argv[0]);
+            fprintf(stderr, "usage: %s [--width N] [--height N] [--frames N] "
+                            "[--immediate]\n", argv[0]);
             return 2;
         }
     }
@@ -168,10 +192,17 @@ int main(int argc, char **argv)
     pp.Windowed = TRUE;
     pp.EnableAutoDepthStencil = TRUE;
     pp.AutoDepthStencilFormat = D3DFMT_D24S8;
-    pp.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+    /*
+     * Vsync, not IMMEDIATE. A real game presents on the refresh; IMMEDIATE here
+     * ran at ~4300 fps, which is not a realistic test and turned out to matter -
+     * see --immediate to compare.
+     */
+    pp.PresentationInterval = immediate ? D3DPRESENT_INTERVAL_IMMEDIATE
+                                       : D3DPRESENT_INTERVAL_ONE;
 
     hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd,
                                  D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, &g_device);
+    g_present = pp;
     if (FAILED(hr)) {
         fprintf(stderr, "CreateDevice failed: 0x%08lx\n", (unsigned long)hr);
         IDirect3D9_Release(d3d);
@@ -180,29 +211,90 @@ int main(int argc, char **argv)
     }
 
     /* The game's frame loop: drain messages, then render. */
-    while (g_running && g_frames_presented < frames) {
-        MSG msg;
-        float t = (float)g_frames_presented / (float)(frames > 1 ? frames - 1 : 1);
+    {
+        DWORD started = GetTickCount();
+        DWORD last_report = started;
+        int frames_at_report = 0;
 
-        while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) {
-                g_running = 0;
-                break;
+        while (g_running && g_frames_presented < frames) {
+            MSG msg;
+            DWORD now;
+            float phase;
+
+            while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+                if (msg.message == WM_QUIT) {
+                    g_running = 0;
+                    break;
+                }
+                TranslateMessage(&msg);
+                DispatchMessageA(&msg);
             }
-            TranslateMessage(&msg);
-            DispatchMessageA(&msg);
-        }
-        if (!g_running)
-            break;
+            if (!g_running)
+                break;
 
-        IDirect3DDevice9_Clear(g_device, 0, NULL,
-                               D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL,
-                               D3DCOLOR_XRGB(30, (int)(t * 200.0f), 90), 1.0f, 0);
-        IDirect3DDevice9_BeginScene(g_device);
-        IDirect3DDevice9_EndScene(g_device);
-        if (FAILED(IDirect3DDevice9_Present(g_device, NULL, NULL, NULL, NULL)))
-            break;
-        g_frames_presented++;
+            /* Apply a queued resize before touching the device. */
+            if (g_pending_width && g_pending_height) {
+                g_present.BackBufferWidth = (UINT)g_pending_width;
+                g_present.BackBufferHeight = (UINT)g_pending_height;
+                g_pending_width = 0;
+                g_pending_height = 0;
+
+                hr = IDirect3DDevice9_Reset(g_device, &g_present);
+                printf("device     : Reset to %ux%u -> 0x%08lx\n",
+                       g_present.BackBufferWidth, g_present.BackBufferHeight,
+                       (unsigned long)hr);
+                if (FAILED(hr))
+                    break;
+            }
+
+            /*
+             * The lost-device dance, which a real game must do and which a
+             * compositor triggers in practice (see NOTES.md on the letterbox
+             * patch): while lost, do not render; when it says NOTRESET, reset.
+             */
+            hr = IDirect3DDevice9_TestCooperativeLevel(g_device);
+            if (hr == D3DERR_DEVICELOST) {
+                Sleep(20);
+                continue;
+            }
+            if (hr == D3DERR_DEVICENOTRESET) {
+                printf("device     : lost, resetting\n");
+                if (FAILED(IDirect3DDevice9_Reset(g_device, &g_present)))
+                    break;
+            }
+
+            /*
+             * Animated from the clock rather than from the frame index: a
+             * frame-index ramp over a large --frames sits at its starting colour
+             * for minutes, which looks exactly like a hung renderer.
+             */
+            now = GetTickCount();
+            phase = (float)((now - started) % 3000u) / 3000.0f;
+
+            IDirect3DDevice9_Clear(g_device, 0, NULL,
+                                   D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL,
+                                   D3DCOLOR_XRGB((int)(60.0f + 195.0f * phase), 40,
+                                                 (int)(195.0f - 155.0f * phase)),
+                                   1.0f, 0);
+            IDirect3DDevice9_BeginScene(g_device);
+            IDirect3DDevice9_EndScene(g_device);
+            if (FAILED(IDirect3DDevice9_Present(g_device, NULL, NULL, NULL, NULL)))
+                break;
+            g_frames_presented++;
+
+            /* Liveness in the title bar, through our own SetWindowTextA. */
+            if (now - last_report >= 1000) {
+                char title[128];
+
+                snprintf(title, sizeof(title),
+                         "nfsu2 native + DXVK - %ux%u - %d fps - %d frames - Esc to quit",
+                         g_present.BackBufferWidth, g_present.BackBufferHeight,
+                         g_frames_presented - frames_at_report, g_frames_presented);
+                SetWindowTextA(hwnd, title);
+                last_report = now;
+                frames_at_report = g_frames_presented;
+            }
+        }
     }
 
     printf("presented  : %d frames (%d-bit build)\n", g_frames_presented,

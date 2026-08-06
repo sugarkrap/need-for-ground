@@ -1,0 +1,32 @@
+{
+  "//": [
+    "Tooling for the native port is TypeScript, run by Deno - no build step, no",
+    "node_modules, and the permission flags below are the whole dependency story.",
+    "",
+    "The analysis/ scripts stay Python because they cannot be anything else:",
+    "pyghidra is a bridge into Ghidra's own JVM, and emulate_stub.py is built on",
+    "Unicorn and Capstone. See analysis/README-python.md."
+  ],
+  "imports": {
+    "@std/yaml": "jsr:@std/yaml@^1.2.0"
+  },
+  "tasks": {
+    "import": "deno run --allow-read --allow-write native/tools/import_decompiled.ts",
+    "survey": "deno run --allow-read --allow-write --allow-run --allow-env native/tools/survey_decompiled.ts",
+    "coverage": "deno run --allow-read native/tools/win32_coverage.ts",
+    "check": "deno check native/tools/*.ts",
+    "fmt": "deno fmt native/tools",
+    "lint": "deno lint native/tools"
+  },
+  "fmt": {
+    "lineWidth": 96,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}

@@ -252,6 +252,28 @@ x87 register stack (MSVC's private convention for `__ftol`, with no C spelling),
 and Ghidra's field-slice syntax on a scalar (`_X._6_2_` for bytes 6..7 of a
 double).
 
+### Open: black window, correct rendering
+
+The native hosts present a black window while rendering correctly. Recorded here
+because the evidence took a while to assemble and the intuitive diagnosis - "the
+renderer is broken" - is wrong:
+
+- reading the backbuffer back with `GetRenderTargetData` and writing it to a PNG
+  (`nfsu2-smoke-d3d9 --readback-png`) shows exactly the colour that was cleared,
+  so the GPU is doing what it was asked
+- `DXVK_HUD=fps` *is* visible in the window, so the swapchain is presented and
+  composited; the HUD and a black background appear in the same frame, which
+  means the backbuffer never reached the presented image
+- not present mode (IMMEDIATE and FIFO), not word size (32- and 64-bit identical),
+  not SDL's backend (wayland and x11), not a size mismatch (DXVK's swapchain
+  matches the request), and DXVK logs no warnings
+
+Environment: Wayland session, NVIDIA, DXVK Native 3.0.2, both -m32 and -m64. The
+suspicion is DXVK Native's backbuffer-to-swapchain blit here rather than anything
+in this repo. A frame counter is not evidence that anything is on screen, which is
+the lesson worth keeping: the readback path was added precisely so that claim can
+be checked.
+
 ## Widescreen/ultrawide FOV patch
 
 Goal: correct field-of-view for arbitrary aspect ratios, baked into the

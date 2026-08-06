@@ -24,6 +24,7 @@
 #include <nfsu2/pe_loader.h>
 
 #include "game_functions.h"
+#include "game_originals.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -45,19 +46,11 @@ static int g_differential_checks;
         }                                                                       \
     } while (0)
 
-/* Addresses as they appear in the decompiled output; see game/manifest.txt. */
-#define ADDR_STRNCPY      0x0075c440u
-#define ADDR_STRRCHR      0x0075d260u
-#define ADDR_MEMCPY       0x00401000u
-#define ADDR_DISTANCE     0x0043ce40u
-#define ADDR_DOT          0x0048b710u
-
-/* The original functions' types, with the conventions Ghidra recovered. */
-typedef char *(NFSU2_CDECL *original_strncpy)(char *, char *, size_t);
-typedef char *(NFSU2_CDECL *original_strrchr)(char *, int);
-typedef void (*original_memcpy)(undefined4 *, undefined4 *, uint);
-typedef float10 (*original_distance)(float *, float *);
-typedef void (NFSU2_THISCALL *original_dot)(float *, float *, float, float, float, float);
+/*
+ * No addresses or function-pointer typedefs here: game_originals.h is generated
+ * from the manifest, so the address and the recovered calling convention of each
+ * original arrive with it. NFSU2_ORIGINAL(symbol, image) resolves one.
+ */
 
 /* --- 1. against a reference --------------------------------------------- */
 
@@ -152,16 +145,17 @@ static void test_against_reference(void)
 
 static void test_against_original(const struct nfsu2_pe_image *image)
 {
-    original_strncpy original_ncpy = nfsu2_pe_function(image, ADDR_STRNCPY);
-    original_strrchr original_rchr = nfsu2_pe_function(image, ADDR_STRRCHR);
-    original_memcpy original_copy = nfsu2_pe_function(image, ADDR_MEMCPY);
-    original_distance original_dist = nfsu2_pe_function(image, ADDR_DISTANCE);
-    original_dot original_dotp = nfsu2_pe_function(image, ADDR_DOT);
+    nfsu2_original__strncpy original_ncpy = NFSU2_ORIGINAL(_strncpy, image);
+    nfsu2_original__strrchr original_rchr = NFSU2_ORIGINAL(_strrchr, image);
+    nfsu2_original_FUN_00401000 original_copy = NFSU2_ORIGINAL(FUN_00401000, image);
+    nfsu2_original_FUN_0043ce40 original_dist = NFSU2_ORIGINAL(FUN_0043ce40, image);
+    nfsu2_original_FUN_0048b710 original_dotp = NFSU2_ORIGINAL(FUN_0048b710, image);
 
     printf("\n# ported code vs the ORIGINAL machine code, same inputs\n");
 
     CHECK(original_ncpy && original_rchr && original_copy && original_dist && original_dotp,
-          "all five addresses resolved inside the mapped image");
+          "all %d manifest addresses resolved inside the mapped image",
+          NFSU2_ORIGINAL_COUNT);
     if (!original_ncpy || !original_dist)
         return;
 

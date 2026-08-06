@@ -1,0 +1,79 @@
+# Which functions to import from decompiled/ and run natively.
+#
+# This file is a list of addresses, names and signatures - facts about the
+# binary, of the same kind NOTES.md already records. The *code* at those
+# addresses is a derivative of the copyrighted game binary and is never
+# committed; see .gitignore, which excludes both decompiled/ and
+# native/game/generated/.
+#
+# native/tools/import_decompiled.py turns this file plus your local decompiled/
+# output into:
+#
+#   generated/<symbol>.c       the function, normalised so it compiles
+#   generated/game_functions.h declarations of the ported functions
+#   generated/game_originals.h address constants and function-pointer typedefs
+#                              for calling the ORIGINAL machine code, derived
+#                              from each function's recovered signature
+#
+# That last one is why the signatures do not need repeating in the tests: adding
+# an entry here is enough to be able to call both versions and compare them.
+
+functions:
+  - address: 0x75c440
+    symbol: _strncpy
+    kind: crt
+    note: MSVC's word-at-a-time strncpy (0x7efefeff zero-byte trick)
+
+  - address: 0x75d260
+    symbol: _strrchr
+    kind: crt
+    note: reverse character search
+
+  - address: 0x401000
+    symbol: FUN_00401000
+    kind: game
+    note: dword-then-byte memcpy, inlined all over the engine
+
+  - address: 0x43ce40
+    symbol: FUN_0043ce40
+    kind: game
+    note: 3D euclidean distance between two float[3]
+
+  - address: 0x48b710
+    symbol: FUN_0048b710
+    kind: game
+    note: dot product into a float[4], preserving y/z/w
+
+  - address: 0x43d1c0
+    symbol: FUN_0043d1c0
+    kind: game
+    note: per-axis proximity test - true when two float[3] agree within a tolerance
+
+# Tried, and deliberately excluded. Each fails for a different reason, and the
+# three together are a fair summary of what "the decompiler output is not
+# compilable C" means in practice. The importer prints these so they stay
+# visible rather than becoming folklore.
+excluded:
+  - address: 0x75c800
+    symbol: shortsort
+    reason: >-
+      Ghidra recovered the signature wrongly. The body reads an
+      `undefined1 *in_EAX` that is never assigned, so the real function takes a
+      parameter Ghidra did not find and the ported code would index off an
+      uninitialised register. Needs the signature corrected in Ghidra and
+      re-exported.
+
+  - address: 0x75d928
+    symbol: __ftol
+    reason: >-
+      Takes its argument on the x87 register stack (`float10 in_ST0;` in the
+      output), which is MSVC's private convention for this helper and has no C
+      spelling at all. Needs a hand-written asm thunk, or replacing with the
+      compiler's own float-to-int conversion.
+
+  - address: 0x75d860
+    symbol: __isnan
+    reason: >-
+      Uses Ghidra's field-slice syntax on a scalar - `_X._6_2_` for bytes 6..7
+      of a double. Not C. Needs the double re-typed as a union in Ghidra, or the
+      slices rewritten by hand as shifts.

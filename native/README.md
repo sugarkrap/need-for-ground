@@ -231,6 +231,40 @@ Run anything with `NFSU2_SHIM_TRACE=1` to see every stubbed call it makes.
   branch does not bail out or divide by zero; anything drawn through it is
   dropped. The renderer presents every frame, so nothing depends on it.
 
+## Open: the window shows black, and the rendering is fine
+
+Worth reading before spending time on it, because the obvious conclusion is
+wrong. Established, in order of how much each rules out:
+
+- **The GPU renders correctly.** `nfsu2-smoke-d3d9 --readback-png out.png` reads
+  the backbuffer back through `GetRenderTargetData` and writes a PNG: it contains
+  exactly the colour that was cleared. Rendering is not the problem, and a frame
+  counter is not evidence of one - which is why the readback exists.
+- **Presentation reaches the window.** With `DXVK_HUD=fps`, DXVK's own overlay is
+  visible in the window. So the swapchain is being presented and composited.
+- **The app's content is not in the presented image.** HUD visible, background
+  black, in the same frame - so the backbuffer never made it into the swapchain
+  image that was shown.
+
+Ruled out: present mode (`IMMEDIATE` and `FIFO` both), word size (32- and
+64-bit builds behave identically), SDL's video backend (`wayland` and `x11`),
+window size mismatch (DXVK reports a swapchain matching the request), and DXVK
+log warnings (there are none). This machine is a Wayland session with an NVIDIA
+GPU and DXVK Native 3.0.2.
+
+That points at DXVK Native's backbuffer-to-swapchain blit in this configuration
+rather than at anything here. It does not block the port - the renderer work is
+verified by readback - but it does need resolving before anything is playable.
+Next steps if picking this up: build DXVK with debug symbols and check whether
+`DxvkSwapchainBlitter` runs, and try a GLFW-WSI build to see whether the SDL2 WSI
+path is specifically involved.
+
+One real bug in our own code was found along the way and fixed: the game-shaped
+host never reset the device on `WM_SIZE`, so Alt+Enter left a 1600x900 backbuffer
+against a 2560x1080 swapchain. It now queues the resize and calls `Reset` from
+the frame loop, and handles `D3DERR_DEVICELOST`/`D3DERR_DEVICENOTRESET` the way a
+real game must.
+
 ## Known gaps, in rough priority order
 
 1. **Audio.** `mss32.dll` (Miles Sound System) is not in the import list at all -
@@ -261,11 +295,17 @@ pseudocode is a derivative of the copyrighted binary exactly as `decompiled/`
 itself is. The manifest, the tooling and the tests are what live in the repo.
 
 ```sh
-python3 native/tools/import_decompiled.py
+deno task import          # native/game/manifest.yaml -> game/generated/
 meson setup native/build32 --cross-file native/cross/linux32.txt \
       -Dnfsu2_exe=/path/to/unwrapped/speed2.exe
 meson test -C native/build32 game-functions
 ```
+
+The manifest is YAML, and the importer generates the differential test's plumbing
+from it: `game_originals.h` carries each function's address and a
+function-pointer typedef built from the signature Ghidra recovered - including
+the calling convention, which is the part that cannot be guessed. Adding a
+function is therefore a manifest entry and nothing else.
 
 Verification is deliberately two-fold:
 

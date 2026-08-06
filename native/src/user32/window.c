@@ -331,6 +331,33 @@ BOOL WINAPI UpdateWindow(HWND hwnd)
     return TRUE;
 }
 
+BOOL WINAPI SetWindowTextA(HWND hwnd, LPCSTR text)
+{
+    struct nfsu2_window *state = nfsu2_window_state(hwnd);
+
+    if (!state) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    SDL_SetWindowTitle(state->sdl, text ? text : "");
+    return TRUE;
+}
+
+int WINAPI GetWindowTextA(HWND hwnd, LPSTR buffer, int size)
+{
+    struct nfsu2_window *state = nfsu2_window_state(hwnd);
+    const char *title;
+    int length;
+
+    if (!state || !buffer || size <= 0) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return 0;
+    }
+    title = SDL_GetWindowTitle(state->sdl);
+    length = snprintf(buffer, (size_t)size, "%s", title ? title : "");
+    return length >= size ? size - 1 : length;
+}
+
 /* --- geometry ---------------------------------------------------------- */
 
 static void desktop_rect(RECT *rect)
