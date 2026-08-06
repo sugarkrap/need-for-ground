@@ -620,23 +620,53 @@ small overflow is caught at the block that suffered it, with its size and the AP
 that allocated it; and `HeapSize` can answer the requested size, which is what
 Windows does and is a correctness fix regardless of the corruption.
 
-#### Two traps to know about before measuring anything here
+#### What the canary found, and what that rules out
 
-**The game persists state that changes its startup path.** It writes
-`NotFirstTime`, `SwapSize` and `Language` into `registry.ini` once it gets far
-enough, and subsequent runs then take a different path. Any before/after comparison
-has to re-import a clean store first:
+`heap.c` now keeps a side table of `(pointer -> requested size)` and fills the gap
+between the request and `malloc_usable_size` with `0xb7`, checking it at `HeapFree`
+and `HeapReAlloc`. Nothing moves, so there is no alignment or interior-pointer
+hazard, and `HeapSize` finally answers what Win32 answers - the size that was asked
+for - rather than glibc's larger usable size. `GlobalAlloc`/`GlobalFree`/`GlobalSize`
+route through the same table, because on Windows both families come from the process
+heap and this game crosses them.
+
+**No overrun is detected, in any run.** So the corruption is *not* a small write past
+a `HeapAlloc` block: that is exactly what the canary would catch, and it never fires.
+What remains:
+
+- a write far past a block, skipping the slack entirely and landing in another
+  chunk's header
+- a write into memory that has already been freed
+- a write past a buffer that **DXVK** owns, not us - a locked vertex or index buffer
+  being the obvious candidate, since `Lock` hands the game a raw pointer and the
+  canary cannot see allocations DXVK made with its own `new`
+
+The third is the most promising, and it is where to look next. It also fits the
+symptom: with tracing on, three consecutive runs now fault in *libc*, on a worker
+thread (`esp` in a thread stack, not the main one), writing to a high mmap address -
+which is what a corrupted allocator arena looks like when the next thread to allocate
+trips over it.
+
+#### One trap, and one correction
+
+**The game persists state that changes its startup path.** It writes `NotFirstTime`,
+`SwapSize` and `Language` into `registry.ini` once it gets far enough, and then takes
+a different path - a fullscreen 2560x1080 swapchain rather than the first-run one. Any
+before/after comparison should re-import a clean store:
 
 ```sh
 deno run -A tools/import_wine_registry.ts --prefix /mnt/games/NFSU2/pfx \
     --out "<game dir>/registry.ini"
 ```
 
-**And the failure point moves between runs on its own.** With identical code and a
-clean registry, consecutive runs have stopped in the relocation loop, inside
-`ld.so`'s thread-TLS allocation, and at `malloc()`'s own corruption check - and how
-far the game gets (519 wrapped D3D9 objects, or none at all) varies with it. One run
-proves nothing here; a change has to be judged over several.
+**And a correction to what this file said a commit ago.** It claimed the failure point
+moves between runs and that how far the game gets varies wildly. That was measurement
+error: the bridge and resource traces only print with `NFSU2_SHIM_TRACE=1`, and a
+series of comparison runs had been made without it - so "0 D3D9 objects wrapped" meant
+"tracing was off", not "the game got nowhere". With tracing on and the same registry,
+three consecutive runs are identical: **519 D3D9 objects wrapped, 23 resources found**,
+then the same crash. The progress is reproducible; only the exact faulting address
+moves, which is what a corrupted heap does.
 
 ## Known gaps, in rough priority order
 
