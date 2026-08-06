@@ -1,0 +1,35 @@
+# 32-bit x86 native ELF - the real target.
+#
+# It is a "cross" file only in meson's bookkeeping sense: the output is a plain
+# i386 Linux ELF built by the system gcc with -m32. Needed because the game's
+# decompiled code is ILP32 through and through (pointers stored in int, struct
+# offsets as literals).
+#
+#   meson setup build32 --cross-file cross/linux32.txt
+#
+# Requires 32-bit runtime libs. On Arch: lib32-glibc, lib32-vulkan-icd-loader,
+# lib32-sdl2-compat (plus lib32-mesa or lib32-nvidia-utils for the ICD).
+
+[binaries]
+c = 'gcc'
+cpp = 'g++'
+ar = 'ar'
+strip = 'strip'
+pkg-config = 'pkg-config'
+
+[built-in options]
+c_args = ['-m32']
+cpp_args = ['-m32']
+c_link_args = ['-m32']
+cpp_link_args = ['-m32']
+
+[properties]
+pkg_config_libdir = '/usr/lib32/pkgconfig'
+needs_exe_wrapper = false
+
+[host_machine]
+system = 'linux'
+kernel = 'linux'
+cpu_family = 'x86'
+cpu = 'i686'
+endian = 'little'

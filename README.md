@@ -117,6 +117,27 @@ before landing on the actual fix - most of it isn't specific to this game
 and is worth reading before attempting a similar DirectX-hooking patch
 elsewhere.
 
+### 6. (branch `native-elf-dxvk`) native Linux ELF port
+
+```
+native/tools/build_dxvk_native.sh 32
+meson setup native/build32 --cross-file native/cross/linux32.txt
+ninja -C native/build32 && meson test -C native/build32
+```
+
+Scaffolding for building the game as a **native 32-bit Linux ELF** instead of a
+patched PE run under Wine: Wine's headers as the Win32/D3D9 declaration source,
+a Win32 shim implemented directly on glibc/POSIX, and DXVK Native providing
+D3D9 (for now - `DIRECTX_SCOPE.md` is the scope for replacing it with our own
+Vulkan renderer). No Wine process is involved at runtime and no winelib is
+used - see `native/README.md` for why that shape was chosen and
+`NOTES.md` for the calling-convention findings the whole thing rests on.
+
+Working today: the Win32 shim (~40% of the game's import list) with a 35-check
+selftest, a D3D9 calling-convention test, a Wine-vs-DXVK header layout probe,
+and an end-to-end smoke test that presents frames through DXVK to Vulkan. No
+game code is ported yet.
+
 ## Setup
 
 ```
@@ -138,4 +159,6 @@ installable - see your distro's package or https://ghidra-sre.org/.
 - `analysis/retype_and_decompile.py` - fixes a Ghidra type-propagation bug
   (an incorrect DirectX vtable type spreading onto an unrelated
   parameter) and re-decompiles a function
+- `native/` - the native Linux ELF port (branch `native-elf-dxvk`): header
+  layer, Win32 shim, DXVK Native integration, tests - see `native/README.md`
 - `NOTES.md` - reverse-engineering findings, what's solved vs. open

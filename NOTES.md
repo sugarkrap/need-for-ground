@@ -77,6 +77,73 @@ reference for the two payloads we haven't independently derived
 byte-identical, and fully inspectable/understood for every other part of
 the transformation.
 
+## Native Linux ELF port: ABI findings
+
+Branch `native-elf-dxvk`. Goal: stop shipping a patched PE that needs Wine, and
+instead build a native i386 Linux ELF, using Wine's *headers* for Win32/D3D9
+declarations and DXVK Native for D3D9 (until the renderer is ours - see
+`DIRECTX_SCOPE.md`). Scaffolding, tests and the full rationale live in
+`native/README.md`; the findings that took measurement rather than reading are
+here.
+
+1. **Winelib is not an option on this system.** Wine 11 here is new-WoW64:
+   `/usr/lib/wine` has `i386-windows`, `x86_64-unix`, `x86_64-windows` but no
+   `i386-unix`, so `winegcc -m32` cannot link anything (`cannot find
+   -lkernel32 / -lwinecrt0 / -lntdll`). That rules out the "ELF that links
+   against libwine" shape and leaves headers-only + native gcc.
+2. **Wine's headers compile natively at -m32 and -m64.** `<windows.h>` and
+   `<d3d9.h>` from `/usr/include/wine/windows` build cleanly with plain gcc
+   against glibc, in the same TU as `<stdio.h>`, `<math.h>` and
+   `<SDL2/SDL.h>`. No header fork needed.
+3. **DXVK Native's COM ABI is cdecl, Wine's is stdcall.** DXVK's
+   `include/native/windows/windows_base.h` defines `STDMETHODCALLTYPE`,
+   `__stdcall` and `WINAPI` as *empty*, so on i386 its vtable slots are cdecl
+   (caller pops). Wine's `minwindef.h:157` makes `WINAPI` =
+   `__attribute__((stdcall)) __attribute__((force_align_arg_pointer))`.
+   Confirmed by generated asm for `dev->lpVtbl->SetViewport(dev, vp)` at
+   `gcc -m32 -O1 -S`: `addl $20, %esp` after the call with Wine's macros
+   (callee popped the 8 bytes), `addl $28, %esp` with them neutralised (caller
+   popped). Mixing the two would corrupt the stack by 8 bytes per D3D9 call.
+   `native/include/nfsu2/d3d9_native.h` neutralises the two macros for the
+   d3d9 includes only and restores them after; no thunk layer and no DXVK
+   patch. Everything else stays stdcall deliberately, so ported code calls
+   Win32 exactly as the original MSVC code did (and so hybrid execution of
+   not-yet-ported machine code stays possible).
+   Note the `force_align_arg_pointer` in Wine's definition - that is the same
+   16-byte stack alignment issue the letterbox patch hit live (item 5 below),
+   handled for us on this path.
+4. **Wine headers hide their prototypes by default.** `WINBASEAPI` expands to
+   `DECLSPEC_IMPORT`, which under GCC on a non-PE target is
+   `__attribute__((visibility("hidden")))` (`winnt.h:58`). A shim built that
+   way links, but its symbols are absent from the dynamic symbol table, so
+   `GetProcAddress` (implemented over `dlsym(RTLD_DEFAULT, ...)`) silently
+   finds nothing. Defining `_KERNEL32_` / `_USER32_` / `_ADVAPI32_` /
+   `_WINMM_` before including any Wine header - the same mechanism Wine uses
+   for its own DLL builds - switches them to default visibility.
+5. **`DWORD` != `UINT` at -m32.** On i386 Wine's `DWORD` is `unsigned long`
+   and `UINT` is `unsigned int`: same width, different types, so a shim
+   signature that disagrees with the header is a hard error at 32-bit while
+   compiling silently at 64-bit (e.g. `ExitProcess(DWORD)` vs
+   `TerminateProcess(HANDLE, UINT)`). Any shim work should be compiled at
+   -m32 before being believed.
+6. **Struct layouts already agree.** 47 D3D9 struct sizes, field offsets and
+   enum constants compared between Wine's headers and DXVK Native's own
+   headers match exactly at both 32- and 64-bit
+   (`native/tests/abi_probe_*.c`, run by `meson test`). So Wine's headers can
+   be used as the type source with no adaptation beyond the convention fix.
+7. **DXVK Native picks its own window-system backend.** It builds every WSI
+   backend it finds (SDL3, SDL2, GLFW) and chooses one at load time. If that
+   choice differs from the toolkit that owns the window, `Direct3DCreate9`
+   throws an uncaught `dxvk::DxvkError` with no message - which is what a
+   first run looks like. `DXVK_WSI_DRIVER=SDL2` fixes it; the smoke host sets
+   it via `setenv(..., 0)` so the environment can still override.
+
+Verified end to end on this machine: a native ELF (no Wine loader) presenting
+frames through DXVK 3.0.2 -> Vulkan on an RTX 2060 SUPER, adapter identifier
+read back correctly through the D3D9 vtable. 32-bit is the real target and
+builds/tests pass there too; only the graphical smoke test is still blocked on
+32-bit SDL2 (`lib32-sdl2-compat`) not being installed.
+
 ## Widescreen/ultrawide FOV patch
 
 Goal: correct field-of-view for arbitrary aspect ratios, baked into the

@@ -30,6 +30,13 @@ scratch/
 scratchpad/
 *.log
 
+# native port: build trees and third-party checkouts (DXVK is fetched by
+# native/tools/build_dxvk_native.sh, never vendored here)
+native/build*/
+native/third_party/
+b32/
+b64/
+
 # Python
 __pycache__/
 *.pyc

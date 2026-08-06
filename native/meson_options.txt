@@ -1,0 +1,9 @@
+option('wine_headers',
+  type : 'string',
+  value : '/usr/include/wine',
+  description : 'Directory containing Wine\'s headers (must have a windows/ subdirectory)')
+
+option('dxvk_lib_dir',
+  type : 'string',
+  value : '',
+  description : 'Directory containing libdxvk_d3d9.so; defaults to third_party/dxvk-native/lib<bits>')
