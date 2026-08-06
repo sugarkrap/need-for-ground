@@ -269,6 +269,15 @@ static void (*g_import_reporter)(const char *library, const char *symbol);
  */
 __attribute__((weak)) void *nfsu2_winsock_lookup(const char *name, unsigned ordinal);
 
+/*
+ * And d3d9.dll, for a different reason: DXVK *does* export Direct3DCreate9, so
+ * dlsym would find it - and it is the wrong one. It is __cdecl and assumes a
+ * 16-byte-aligned stack, neither of which is true of the game's call. The bridge
+ * (src/d3d9_bridge/) provides a __stdcall, stack-realigning entry point that returns
+ * wrapped interfaces, and it must win. Weak, so hosts without the bridge still link.
+ */
+__attribute__((weak)) void *nfsu2_d3d9_lookup(const char *name);
+
 static int library_is(const char *library, const char *name)
 {
     size_t i;
@@ -404,7 +413,15 @@ int nfsu2_pe_resolve_imports(struct nfsu2_pe_image *image, struct nfsu2_pe_impor
             }
             symbol = (const char *)hint + 2; /* skip the ordinal hint */
 
-            address = dlsym(RTLD_DEFAULT, symbol);
+            /*
+             * The bridge goes *first* for d3d9.dll, not as a fallback: dlsym would
+             * find DXVK's own export, which is the wrong ABI for this caller.
+             */
+            address = NULL;
+            if (nfsu2_d3d9_lookup && library_is(library, "d3d9.dll"))
+                address = nfsu2_d3d9_lookup(symbol);
+            if (!address)
+                address = dlsym(RTLD_DEFAULT, symbol);
             if (!address && nfsu2_winsock_lookup && library_is(library, "ws2_32.dll"))
                 address = nfsu2_winsock_lookup(symbol, 0);
             if (!address) {
