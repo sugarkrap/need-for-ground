@@ -138,13 +138,40 @@ here.
    first run looks like. `DXVK_WSI_DRIVER=SDL2` fixes it; the smoke host sets
    it via `setenv(..., 0)` so the environment can still override.
 
+8. **HWND has to be an `SDL_Window*`.** DXVK casts
+   `D3DPRESENT_PARAMETERS.hDeviceWindow` straight to its backend window
+   pointer, and the game gets that HWND from `CreateWindowExA`. So the user32
+   shim cannot use a handle type of its own - it makes HWND *be* the
+   SDL_Window and hangs per-window state off `SDL_SetWindowData`. Anything
+   else crashes inside DXVK's WSI layer rather than in our code, which would be
+   an unpleasant thing to debug.
+9. **Map keys by scancode, not keycode.** The game hardcodes VK_W/VK_A/VK_S/
+   VK_D, meaning the physical cluster on the left of the keyboard. Translating
+   SDL keycodes would faithfully deliver VK_Z/VK_Q on the AZERTY layout this
+   French build shipped for - correct by the letter and useless in practice.
+   Characters are separate: they arrive as WM_CHAR from SDL_TEXTINPUT, which is
+   where the platform does layout and dead-key composition.
+10. **Two Wine header quirks that only bite at one width.** `CreateWindowA` is
+   a macro over `CreateWindowExA` (winuser.h:4005), so defining it as a
+   function is a syntax error; and the legacy `GWL_USERDATA`/`GWL_WNDPROC`/
+   `GWL_HINSTANCE` names are absent at 64-bit (Win64 dropped them for the
+   pointer-sized `GWLP_*`) while `GWL_ID` is kept. `win32_compat.h` aliases the
+   missing ones individually.
+
 Verified end to end at the real target: an **i386** native ELF (no Wine loader)
 presenting 300 frames at 2560x1080 through a 32-bit DXVK 3.0.2 build -> Vulkan
 on an RTX 2060 SUPER, adapter identifier read back correctly through the D3D9
 vtable. That last part is what makes the convention finding above more than a
 reading of the headers: a stdcall/cdecl mismatch could not survive 300 frames of
-vtable dispatch. The 64-bit build does the same, and both test suites pass at
+vtable dispatch. The 64-bit build does the same, and all four test suites pass at
 -m32 and -m64 with no warnings.
+
+The user32 shim closes the loop on that: `nfsu2-smoke-game-loop` registers a
+class, creates a window through our own `CreateWindowExA`, hands that HWND to
+`CreateDevice`, and runs a `PeekMessageA`/`DispatchMessageA` frame loop without
+touching SDL anywhere - the same sequence the game's own startup performs -
+presenting 200 frames at 2560x1080 with WM_CREATE, WM_ACTIVATEAPP and real
+keyboard input arriving at a stdcall WNDPROC.
 
 ## Widescreen/ultrawide FOV patch
 

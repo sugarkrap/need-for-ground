@@ -16,7 +16,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 IMPORTS = REPO / "analysis/win32_imports.txt"
-SHIM_DIR = REPO / "native/src/win32"
+# Every DLL we implement: src/win32 (kernel32 and friends), src/user32, ...
+SHIM_ROOT = REPO / "native/src"
 
 # A definition looks like:  RETTYPE WINAPI Name(args)  - possibly with the
 # return type split over the previous line, which we do not do in this tree.
@@ -55,9 +56,10 @@ GROUPS = [
 
 
 def implemented():
-    names = set()
-    for path in sorted(SHIM_DIR.glob("*.c")):
-        names |= set(DEF_RE.findall(path.read_text()))
+    names = {}
+    for path in sorted(SHIM_ROOT.glob("*/*.c")):
+        for name in DEF_RE.findall(path.read_text()):
+            names[name] = path.parent.name
     return names
 
 
@@ -87,7 +89,8 @@ def main():
                     help="list shim functions not in the import list")
     args = ap.parse_args()
 
-    have, want = implemented(), imported()
+    have_map = implemented()
+    have, want = set(have_map), imported()
     external = {n for n in want if n in PROVIDED_ELSEWHERE}
     done = sorted(have & want)
     missing = sorted(want - have - external)
@@ -105,10 +108,16 @@ def main():
         print(f"shimmed but not imported: {len(extra)}"
               " (helpers, or names the import list does not cover)")
 
+    by_dll = {}
+    for name in done:
+        by_dll.setdefault(have_map[name], []).append(name)
+    print("by shim module  : " +
+          ", ".join(f"{d}={len(v)}" for d, v in sorted(by_dll.items())))
+
     if args.done:
         print("\nimplemented:")
         for name in done:
-            print(f"  {name}")
+            print(f"  {name:<32} ({have_map[name]})")
         return
     if args.extra:
         print("\nnot in the import list:")

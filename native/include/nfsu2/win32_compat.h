@@ -38,6 +38,30 @@
 #include <windows.h>
 
 /*
+ * The Win64 SDK dropped the legacy GWL_USERDATA / GWL_WNDPROC / ... names in
+ * favour of the pointer-sized GWLP_* ones, and Wine's headers follow it. On
+ * Win32 - which is what the game is - the two sets are the same values, and the
+ * game uses the legacy names. Alias them so identical sources still compile in
+ * a 64-bit toolchain-validation build. Guarded individually because Wine keeps
+ * some of the legacy names (GWL_ID) even at 64-bit.
+ */
+#ifndef GWL_USERDATA
+#  define GWL_USERDATA   GWLP_USERDATA
+#endif
+#ifndef GWL_WNDPROC
+#  define GWL_WNDPROC    GWLP_WNDPROC
+#endif
+#ifndef GWL_HINSTANCE
+#  define GWL_HINSTANCE  GWLP_HINSTANCE
+#endif
+#ifndef GWL_HWNDPARENT
+#  define GWL_HWNDPARENT GWLP_HWNDPARENT
+#endif
+#ifndef GWL_ID
+#  define GWL_ID         GWLP_ID
+#endif
+
+/*
  * Extra convention macros for porting decompiled code verbatim. Ghidra
  * annotates the original functions with __cdecl / __stdcall / __thiscall /
  * __fastcall; keeping those annotations on the ported C prototypes is what

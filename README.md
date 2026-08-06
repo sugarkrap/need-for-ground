@@ -133,10 +133,18 @@ Vulkan renderer). No Wine process is involved at runtime and no winelib is
 used - see `native/README.md` for why that shape was chosen and
 `NOTES.md` for the calling-convention findings the whole thing rests on.
 
-Working today: the Win32 shim (~40% of the game's import list) with a 35-check
-selftest, a D3D9 calling-convention test, a Wine-vs-DXVK header layout probe,
-and an end-to-end smoke test that presents frames through DXVK to Vulkan -
-verified as an i386 ELF at 2560x1080. No game code is ported yet.
+Working today (~55% of the game's import list, measured):
+
+- kernel32-side shim - paths with case-insensitive resolution, file I/O, heap,
+  virtual memory, threads, sync, TLS, timing - with a 35-check selftest
+- user32 shim on SDL2 - windows, the message queue, SDL-event to WM_*
+  translation, cursor/capture - with a 34-check selftest
+- a D3D9 calling-convention test and a Wine-vs-DXVK header layout probe
+- two hosts: one SDL-driven, one that touches no SDL at all and runs the game's
+  own RegisterClassExA -> CreateWindowExA -> PeekMessageA shape, presenting
+  through DXVK to Vulkan as an i386 ELF at 2560x1080
+
+No game code is ported yet.
 
 ## Setup
 

@@ -60,6 +60,29 @@ nfsu2_win32_dep = declare_dependency(
   include_directories : [nfsu2_inc, wine_inc],
   dependencies : [thread_dep, dl_dep])
 
+# --- user32 shim (SDL2-backed) ------------------------------------------
+# Kept separate from the core shim so that libnfsu2_win32 stays SDL-free and
+# usable on a machine without 32-bit SDL2 installed.
+sdl2 = dependency('sdl2', required : false)
+
+if sdl2.found()
+  libnfsu2_user32 = static_library('nfsu2_user32',
+    files(
+      'src/user32/input.c',
+      'src/user32/keymap.c',
+      'src/user32/message.c',
+      'src/user32/window.c',
+    ),
+    include_directories : [nfsu2_inc, wine_inc],
+    dependencies : [sdl2, thread_dep],
+    c_args : ['-D_GNU_SOURCE'],
+    install : false)
+
+  nfsu2_user32_dep = declare_dependency(
+    link_with : libnfsu2_user32,
+    dependencies : [nfsu2_win32_dep, sdl2])
+endif
+
 # --- shim selftest ------------------------------------------------------
 shim_selftest = executable('nfsu2-shim-selftest',
   'tests/shim_selftest.c',
@@ -79,6 +102,18 @@ d3d9_abi_selftest = executable('nfsu2-d3d9-abi-selftest',
   install : false)
 test('d3d9-abi', d3d9_abi_selftest, timeout : 60)
 
+# --- user32 selftest ----------------------------------------------------
+# Needs a display; the test itself exits 77 (SKIP) when there is none.
+if sdl2.found()
+  user32_selftest = executable('nfsu2-user32-selftest',
+    'tests/user32_selftest.c',
+    dependencies : [nfsu2_user32_dep],
+    c_args : ['-D_GNU_SOURCE'],
+    export_dynamic : true,
+    install : false)
+  test('user32', user32_selftest, timeout : 120)
+endif
+
 # --- DXVK Native --------------------------------------------------------
 # Built out of tree by tools/build_dxvk_native.sh, which drops the .so into
 # third_party/dxvk-native/lib<bits>/.
@@ -91,12 +126,21 @@ dxvk_d3d9 = cc.find_library('dxvk_d3d9',
   dirs : [dxvk_lib_dir],
   required : false)
 
-sdl2 = dependency('sdl2', required : false)
-
 if dxvk_d3d9.found() and sdl2.found()
+  # Drives SDL directly: proves the ELF + DXVK + Vulkan path in isolation.
   executable('nfsu2-smoke-d3d9',
     'src/host/smoke_d3d9.c',
     dependencies : [nfsu2_win32_dep, dxvk_d3d9, sdl2],
+    c_args : ['-D_GNU_SOURCE'],
+    build_rpath : dxvk_lib_dir,
+    export_dynamic : true,
+    install : false)
+
+  # Touches no SDL at all: window via our CreateWindowExA, HWND straight into
+  # DXVK, PeekMessageA/DispatchMessageA loop - the shape the ported game has.
+  executable('nfsu2-smoke-game-loop',
+    'src/host/smoke_game_loop.c',
+    dependencies : [nfsu2_user32_dep, dxvk_d3d9],
     c_args : ['-D_GNU_SOURCE'],
     build_rpath : dxvk_lib_dir,
     export_dynamic : true,

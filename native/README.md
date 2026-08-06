@@ -56,9 +56,11 @@ include/nfsu2/
   d3d9_native.h      wine's D3D9 types at DXVK Native's ABI  <- the keystone
   ghidra_types.h     undefined4/byte/uint/... so decompiled output compiles
   win32_shim.h       shim control surface (init, path translation, tracing)
-src/win32/           the shim: files, paths, heap, vmem, threads, sync, time, ...
-src/host/            smoke_d3d9.c - window + device + clear/present
-tests/               shim selftest, D3D9 convention selftest, header ABI probes
+src/shim_dll_macros.h  per-DLL visibility macros; include before any wine header
+src/win32/           kernel32 &c: files, paths, heap, vmem, threads, sync, time
+src/user32/          windows, message queue, SDL->WM_* translation, input
+src/host/            smoke_d3d9.c (SDL-driven) and smoke_game_loop.c (game-shaped)
+tests/               shim, user32, D3D9 convention selftests; header ABI probes
 tools/               DXVK build script, coverage report, ABI diff
 cross/linux32.txt    the real target: i386 ELF
 third_party/         DXVK checkout and built .so (not committed)
@@ -98,6 +100,12 @@ Run `meson test -C native/build32` (and `build64`):
 
 - **shim** - 35 checks over path translation, file I/O, enumeration, heap,
   virtual memory, timing, critical sections, TLS, events, threads.
+- **user32** - 34 checks over class registration, window creation and geometry,
+  window longs, the message queue (including filters and PM_REMOVE semantics),
+  WNDPROC dispatch, PostQuitMessage, the ShowCursor *counter*, and SDL-event ->
+  WM_* translation driven by synthetic SDL events (W, escape, arrows, F-keys,
+  the key-up transition bit). Skips with meson's SKIP status on a headless
+  machine rather than failing.
 - **d3d9-abi** - D3D9 vtable dispatch through Wine's macros in the cdecl world:
   arguments arrive intact, seven-argument calls marshal, and the caller's stack
   is still balanced after 100k calls.
@@ -124,6 +132,26 @@ convention decision in `d3d9_native.h` confirmed against the real library and
 not just against our own test doubles. The 64-bit build does the same at
 1280x720.
 
+`nfsu2-smoke-game-loop` goes further and touches **no SDL at all** - it is the
+shape the ported game will have:
+
+```
+$ ./build32/nfsu2-smoke-game-loop --frames 200 --width 2560 --height 1080
+screen     : 2560x1080 (GetSystemMetrics)
+wndproc    : WM_CREATE
+client     : 2560x1080 (requested 2560x1080)
+adapter    : NVIDIA GeForce RTX 2060 SUPER
+wndproc    : WM_ACTIVATEAPP active=1
+wndproc    : WM_KEYDOWN vk=0x20
+presented  : 200 frames (32-bit build)
+```
+
+RegisterClassExA -> CreateWindowExA -> that HWND into
+`D3DPRESENT_PARAMETERS.hDeviceWindow` -> PeekMessageA/DispatchMessageA loop.
+It is the only test that can prove HWND-is-an-SDL_Window holds all the way
+through DXVK's WSI when the window came from *our* CreateWindowExA, and that
+real input reaches a stdcall WNDPROC.
+
 ## Win32 coverage
 
 ```sh
@@ -135,12 +163,36 @@ It cross-references `../analysis/win32_imports.txt` (what the unwrapped exe
 actually imports) against the entry points defined in `src/win32/`, so
 "how much Win32 is left" is measured rather than guessed.
 
+## user32 design notes
+
+- **HWND is an SDL_Window\***, not a handle of ours. The game passes the HWND
+  from CreateWindowExA into `D3DPRESENT_PARAMETERS.hDeviceWindow`, and DXVK
+  casts that straight to its backend window pointer, so anything else would
+  crash inside DXVK. Per-window state hangs off `SDL_SetWindowData`, so there is
+  no side table to keep in sync.
+- **CreateWindowExA's size is the client size, and AdjustWindowRect is the
+  identity.** SDL_CreateWindow also takes a client size, so the standard Win32
+  idiom ("adjust a client rect, create with the result") lands on exactly the
+  client size the caller wanted. `GetSystemMetrics` reports zero for every
+  decoration metric to stay consistent with that.
+- **Keys are mapped by scancode, not keycode** - i.e. by physical position. A
+  2004 game hardcodes VK_W/VK_A/VK_S/VK_D meaning "the cluster on the left";
+  mapping through keycodes would move those to Z/Q/S/D on the AZERTY layout
+  this build shipped for. Text entry does not use that path at all - WM_CHAR
+  comes from SDL_TEXTINPUT, which is layout- and dead-key-aware.
+- **ShowCursor is a counter**, as on Windows, not a boolean. Game code hides on
+  entering the 3D view and shows on leaving, and it relies on the pairing.
+- **TranslateMessage is a no-op** returning TRUE for key messages: character
+  composition already happened in the SDL pump, which is where the platform
+  does it.
+- **No GDI.** BeginPaint returns a fake HDC and a correct rcPaint so a WM_PAINT
+  branch does not bail out or divide by zero; anything drawn through it is
+  dropped. The renderer presents every frame, so nothing depends on it.
+
 ## Known gaps, in rough priority order
 
-1. **Window and input** (`user32`): no window creation, message loop, or
-   `dinput8`. The smoke test uses SDL2 directly; the game's own
-   `CreateWindowExA` / `PeekMessageA` / `DispatchMessageA` path needs an
-   SDL-backed message pump.
+1. **`dinput8`**: keyboard and mouse arrive as window messages, but the game
+   also opens DirectInput8 for the wheel/gamepad path. Nothing there yet.
 2. **CRT and locale**: the import list is full of MSVCRT support entry points
    (`LCMapStringA`, `GetStringTypeA`, `MultiByteToWideChar`, ...). Ported code
    compiled with gcc will use glibc for most of it, but any code path kept as
@@ -153,6 +205,9 @@ actually imports) against the entry points defined in `src/win32/`, so
 6. **`VirtualFree(MEM_RELEASE)`** leaks the mapping because reservation sizes
    are not tracked. Harmless for a process that exits; wrong for anything that
    cycles large allocations.
+7. **gdi32** (12 imports): `CreateFontA`/`ExtTextOutA`/`BitBlt` - the 2004 debug
+   text overlay. Low value; a stub layer that swallows the calls is probably
+   enough.
 
 ## How the game code gets in
 

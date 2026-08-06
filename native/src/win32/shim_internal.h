@@ -2,21 +2,7 @@
 #ifndef NFSU2_SHIM_INTERNAL_H
 #define NFSU2_SHIM_INTERNAL_H
 
-/*
- * Wine's headers decorate imported prototypes with DECLSPEC_IMPORT, which
- * under GCC on a non-PE target means __attribute__((visibility("hidden"))).
- * Definitions inherit that, so a shim built without these macros links but is
- * not in the executable's dynamic symbol table - and GetProcAddress (which
- * goes through dlsym, see module.c) silently finds nothing.
- *
- * Defining the per-DLL "I am implementing this DLL" macros is the mechanism
- * Wine itself uses for its own kernel32/user32 builds, and it switches those
- * prototypes to default visibility. Must be defined before any Wine header.
- */
-#define _KERNEL32_
-#define _USER32_
-#define _ADVAPI32_
-#define _WINMM_
+#include "../shim_dll_macros.h"
 
 #include <nfsu2/win32_compat.h>
 #include <nfsu2/win32_shim.h>
