@@ -138,6 +138,10 @@ HANDLE WINAPI CreateFileA(LPCSTR name, DWORD access, DWORD share,
     }
     f->fd = fd;
     f->host_path = strdup(host);
+    /* Successes are traced, not just failures. A run where the game opened
+     * nothing at all used to be indistinguishable from a run where the tracing
+     * simply did not cover opens - see the note on GetCurrentDirectoryA. */
+    nfsu2_shim_trace("CreateFileA(%s -> %s) = %p", name, host, (void *)f);
     SetLastError(ERROR_SUCCESS);
     return (HANDLE)f;
 }
@@ -189,6 +193,16 @@ BOOL WINAPI ReadFile(HANDLE h, LPVOID buf, DWORD count, LPDWORD read_out, LPOVER
 
     if (read_out)
         *read_out = (DWORD)total;
+    /*
+     * A short read is reported loudly. Win32 calls it success with a smaller
+     * count, and this game does not always check: it loads structured data into
+     * a buffer and then walks counts out of that buffer's header, so a partial
+     * read becomes a wild pointer walk somewhere else entirely.
+     */
+    if ((DWORD)total < count)
+        nfsu2_shim_trace("ReadFile(%s): SHORT READ - asked for %lu, got %ld",
+                         f->host_path ? f->host_path : "?",
+                         (unsigned long)count, (long)total);
     return TRUE;
 }
 
@@ -515,19 +529,49 @@ BOOL WINAPI FindClose(HANDLE h)
 
 /* --- current / full paths ---------------------------------------------- */
 
+/*
+ * The drive-qualified spelling of the game root. This has to carry a drive
+ * letter, and the reason is worth spelling out, because it cost a long hunt.
+ *
+ * The game's file layer is a virtual filesystem with one *device* per drive
+ * letter reported by GetLogicalDrives, and it resolves which device to use by
+ * taking the prefix up to the ':' of the path it is given. Its search path is
+ * whatever GetCurrentDirectoryA returns (FUN_006f791a). This function used to
+ * return the host path - "/mnt/games/..." early on, and "." once the root went
+ * unset - and neither names a device, so every lookup fell back to the abstract
+ * base device, whose open method is literally `or eax,-1; ret 0xc`. No Win32
+ * call was ever made, so a trace of the run showed no file I/O at all and it
+ * looked as though the game had simply not asked for its data.
+ *
+ * It had. What followed was worse than a failed load: the game requests its
+ * memory files asynchronously into a buffer its allocator fills with 0xee, and
+ * the completion handler (FUN_005793c0) relocates the header's record array
+ * *without checking the failure flag it is handed*. With the buffer still
+ * poison, the record count read as 0x44443333, and the handler wrote a pointer
+ * every 20 bytes across the heap until it ran off the end - corrupting glibc's
+ * arena on the way and then faulting. The heap corruption chased through
+ * canaries and guard pages was this, one indirection removed.
+ *
+ * "C:" is the honest answer under this shim's own drive mapping: path.c already
+ * resolves an unmapped drive letter to the game root, and volume.c already
+ * reports C: as the install drive, so C:\ *is* where the game is installed as
+ * far as anything here is concerned.
+ */
+#define NFSU2_ROOT_WINDOWS_PATH "C:\\"
+
 UINT WINAPI GetCurrentDirectoryA(UINT size, LPSTR buf)
 {
-    /*
-     * The game's own notion of "current directory" is the install root; it
-     * uses this to build relative data paths. Report the root as a Windows-
-     * looking path so any string surgery the game does still parses.
-     */
-    const char *root = nfsu2_path_root();
-    UINT need = (UINT)strlen(root) + 1;
+    static const char root[] = NFSU2_ROOT_WINDOWS_PATH;
+    UINT need = (UINT)sizeof(root); /* includes the terminator */
 
+    /* Win32: too small returns the size *with* the terminator and writes
+     * nothing; success returns the length without it. The game passes a 512-byte
+     * stack buffer, but the contract is what callers rely on. */
     if (!buf || size < need)
         return need;
     memcpy(buf, root, need);
+    nfsu2_shim_trace("GetCurrentDirectoryA = %s (the game root; its file system "
+                     "resolves a device from the drive letter)", root);
     return need - 1;
 }
 

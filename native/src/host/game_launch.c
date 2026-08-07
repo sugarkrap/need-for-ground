@@ -32,6 +32,7 @@
 #include <nfsu2/pe_loader.h>
 #include <nfsu2/seh.h>
 #include <nfsu2/teb.h>
+#include <nfsu2/win32_shim.h>
 
 #include <libgen.h>
 #include <stdint.h>
@@ -106,6 +107,17 @@ int main(int argc, char **argv)
         fprintf(stderr, "warning: cannot chdir to %s\n", root);
     setenv("NFSU2_ROOT", root, 1);
     printf("root       : %s\n", root);
+
+    /*
+     * The shim's own root, which is not the same thing as the working directory:
+     * every path the game opens is resolved against it. This host used to rely on
+     * the chdir alone, which worked by accident - path.c falls back to "." - but
+     * left nfsu2_path_root() reporting "." to everything that asks, including
+     * GetCurrentDirectoryA, whose answer the game uses as its file-system search
+     * path. Both smoke hosts have always called this.
+     */
+    if (nfsu2_win32_init(root) != 0)
+        fprintf(stderr, "warning: cannot set the shim root to %s\n", root);
 
     if (nfsu2_pe_load(exe, &image, error, sizeof(error)) != 0) {
         fprintf(stderr, "%s: %s\n", exe, error);
