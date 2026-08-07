@@ -22,6 +22,16 @@
 
 static struct dinput_device *g_live[MAX_LIVE_DEVICES];
 
+const char *nfsu2_dinput_kind_name(enum dinput_device_kind kind)
+{
+    switch (kind) {
+    case DINPUT_KEYBOARD: return "keyboard";
+    case DINPUT_MOUSE:    return "mouse";
+    case DINPUT_JOYSTICK: return "joystick";
+    }
+    return "?";
+}
+
 void nfsu2_dinput_register(struct dinput_device *device)
 {
     int i;
@@ -45,7 +55,8 @@ void nfsu2_dinput_unregister(struct dinput_device *device)
     }
 }
 
-void nfsu2_dinput_device_buffer_push(struct dinput_device *device, DWORD offset, DWORD data)
+void nfsu2_dinput_device_buffer_push_action(struct dinput_device *device, DWORD offset,
+                                            DWORD data, UINT_PTR app_data)
 {
     DIDEVICEOBJECTDATA *entry;
 
@@ -64,7 +75,31 @@ void nfsu2_dinput_device_buffer_push(struct dinput_device *device, DWORD offset,
     entry->dwData = data;
     entry->dwTimeStamp = GetTickCount();
     entry->dwSequence = ++device->sequence;
+    entry->uAppData = app_data;
     device->buffer_count++;
+}
+
+void nfsu2_dinput_device_buffer_push(struct dinput_device *device, DWORD offset, DWORD data)
+{
+    nfsu2_dinput_device_buffer_push_action(device, offset, data, 0);
+}
+
+/*
+ * Deliver a key change to whichever action-map slots that key services.
+ *
+ * A key can appear more than once: the game binds a primary and an alternate for
+ * every control (both Up and W are Throttle), and each binding is its own slot with
+ * its own offset, so each gets its own entry.
+ */
+static void keyboard_push_actions(struct dinput_device *device, unsigned char dik, DWORD data)
+{
+    int i;
+
+    for (i = 0; i < device->action_count; i++) {
+        if (device->actions[i].dik == dik)
+            nfsu2_dinput_device_buffer_push_action(device, device->actions[i].offset, data,
+                                                  device->actions[i].app_data);
+    }
 }
 
 /*
@@ -87,9 +122,16 @@ void nfsu2_dinput_notify_sdl_event(const void *opaque_event)
         case SDL_KEYUP:
             if (device->kind == DINPUT_KEYBOARD && !event->key.repeat) {
                 unsigned char dik = nfsu2_dik_from_sdl_scancode(event->key.keysym.scancode);
-                if (dik)
-                    nfsu2_dinput_device_buffer_push(device, dik,
-                                                    event->type == SDL_KEYDOWN ? 0x80 : 0x00);
+                DWORD data = event->type == SDL_KEYDOWN ? 0x80 : 0x00;
+
+                if (!dik)
+                    break;
+                /* With an action map the game reads slots, not scancodes; without
+                 * one, the offset *is* the scancode, as c_dfDIKeyboard defines. */
+                if (device->action_count > 0)
+                    keyboard_push_actions(device, dik, data);
+                else
+                    nfsu2_dinput_device_buffer_push(device, dik, data);
             }
             break;
         case SDL_MOUSEBUTTONDOWN:
@@ -377,6 +419,10 @@ static HRESULT WINAPI device_Acquire(IDirectInputDevice8A *self)
     device->acquired = 1;
     device->buffer_head = 0;
     device->buffer_count = 0;
+    nfsu2_shim_trace("dinput Acquire: %s (data format %lu bytes, buffer %lu)",
+                     nfsu2_dinput_kind_name(device->kind),
+                     (unsigned long)device->state_size,
+                     (unsigned long)device->buffer_size);
     return DI_OK;
 }
 
@@ -399,6 +445,13 @@ static HRESULT WINAPI device_GetDeviceState(IDirectInputDevice8A *self, DWORD si
     if (!device->acquired)
         return DIERR_NOTACQUIRED;
 
+    if (!device->traced_state) {
+        device->traced_state = 1;
+        nfsu2_shim_trace("dinput: %s read through GetDeviceState (immediate, %lu bytes)"
+                         " - this is the path that feeds it",
+                         nfsu2_dinput_kind_name(device->kind), (unsigned long)size);
+    }
+
     /*
      * Pump SDL here so immediate state is current even if the game reads input
      * without running a message loop that frame. SDL_PumpEvents only fills the
@@ -406,6 +459,31 @@ static HRESULT WINAPI device_GetDeviceState(IDirectInputDevice8A *self, DWORD si
      * user32's PeekMessageA.
      */
     SDL_PumpEvents();
+
+    /*
+     * An action-mapped device reports slots, not device objects: the buffer is
+     * dwDataSize bytes and each action's value sits at the offset assigned when the
+     * map was set. That applies whatever the underlying device is, so it is handled
+     * before the per-kind switch.
+     */
+    if (device->action_count > 0) {
+        const Uint8 *keys = SDL_GetKeyboardState(NULL);
+        unsigned char *out = data;
+        int i;
+
+        if (size < device->state_size)
+            return DIERR_INVALIDPARAM;
+        memset(out, 0, size);
+        for (i = 0; i < device->action_count; i++) {
+            SDL_Scancode scancode = nfsu2_sdl_scancode_from_dik(device->actions[i].dik);
+
+            if (scancode == SDL_SCANCODE_UNKNOWN || !keys[scancode])
+                continue;
+            if (device->actions[i].offset + sizeof(DWORD) <= size)
+                *(DWORD *)(out + device->actions[i].offset) = 0x80;
+        }
+        return DI_OK;
+    }
 
     switch (device->kind) {
     case DINPUT_KEYBOARD: {
@@ -510,6 +588,15 @@ static HRESULT WINAPI device_GetDeviceData(IDirectInputDevice8A *self, DWORD obj
         return DIERR_INVALIDPARAM;
     if (!device->acquired)
         return DIERR_NOTACQUIRED;
+
+    if (!device->traced_data) {
+        device->traced_data = 1;
+        nfsu2_shim_trace("dinput: %s read through GetDeviceData (buffered, "
+                         "dwBufferSize=%lu) - this is the path that feeds it",
+                         nfsu2_dinput_kind_name(device->kind),
+                         (unsigned long)device->buffer_size);
+    }
+
     if (!device->buffer_size) {
         /* DirectInput's own answer when no buffer was configured - and the sign
          * that a caller forgot DIPROP_BUFFERSIZE. */
@@ -756,20 +843,147 @@ static HRESULT WINAPI device_WriteEffectToFile(IDirectInputDevice8A *self, LPCST
     return DIERR_UNSUPPORTED;
 }
 
+/* --- action mapping ------------------------------------------------------- */
+
+/*
+ * The semantic layout is in dinput8_internal.h. NFSU2 uses keyboard semantics
+ * exclusively for all 53 of its actions, so the low byte is a DIK code throughout
+ * and no genre default mapping is needed; a genre semantic would arrive here as an
+ * unrecognised class and be left unmapped rather than mis-bound.
+ */
+
+/* Which semantic class this device can answer for. */
+static unsigned int device_semantic_class(const struct dinput_device *device)
+{
+    switch (device->kind) {
+    case DINPUT_KEYBOARD: return SEMANTIC_KEYBOARD;
+    case DINPUT_MOUSE:    return SEMANTIC_MOUSE;
+    case DINPUT_JOYSTICK: return SEMANTIC_JOYSTICK;
+    }
+    return 0;
+}
+
+/*
+ * Where action `index` keeps its value in the state buffer.
+ *
+ * DirectInput assigns the offsets and reports the total in dwDataSize; it does not
+ * say in the structure where each one went. The layout is one DWORD per action in
+ * array order, which dwDataSize corroborates - NFSU2 declares 53 actions and
+ * dwDataSize 212 - and that identity is checked below rather than assumed.
+ */
+static DWORD action_offset(DWORD index)
+{
+    return index * sizeof(DWORD);
+}
+
 static HRESULT WINAPI device_BuildActionMap(IDirectInputDevice8A *self, LPDIACTIONFORMATA format,
                                             LPCSTR user, DWORD flags)
 {
-    (void)self; (void)format; (void)user; (void)flags;
-    NFSU2_STUB("dinput BuildActionMap");
-    return DIERR_UNSUPPORTED;
+    struct dinput_device *device = (struct dinput_device *)self;
+    unsigned int mine = device_semantic_class(device);
+    DWORD mapped = 0;
+    DWORD i;
+
+    (void)user; (void)flags;
+    if (!format || !format->rgoAction)
+        return DIERR_INVALIDPARAM;
+    if (format->dwSize != sizeof(*format) || format->dwActionSize != sizeof(DIACTIONA))
+        return DIERR_INVALIDPARAM;
+
+    /*
+     * Fill in, for every action this device can service, which object services it.
+     * Actions belonging to another class are left with dwHow = DIAH_UNMAPPED, which
+     * is how the caller learns to offer them to a different device.
+     */
+    for (i = 0; i < format->dwNumActions; i++) {
+        DIACTIONA *action = &format->rgoAction[i];
+        unsigned char low = (unsigned char)(action->dwSemantic & 0xffu);
+
+        if (SEMANTIC_CLASS(action->dwSemantic) != mine || !low) {
+            action->dwHow = DIAH_UNMAPPED;
+            continue;
+        }
+        if (mine == SEMANTIC_KEYBOARD &&
+            nfsu2_sdl_scancode_from_dik(low) == SDL_SCANCODE_UNKNOWN) {
+            /* A key this shim cannot produce. Saying so is better than claiming a
+             * binding that will never fire. */
+            action->dwHow = DIAH_UNMAPPED;
+            continue;
+        }
+
+        action->guidInstance = (mine == SEMANTIC_KEYBOARD) ? GUID_SysKeyboard : GUID_SysMouse;
+        action->dwObjID = DIDFT_PSHBUTTON | DIDFT_MAKEINSTANCE(low);
+        action->dwHow = DIAH_DEFAULT;
+        mapped++;
+    }
+
+    if (mapped == 0)
+        return DI_NOEFFECT; /* nothing here for this device */
+    return DI_OK;
 }
 
 static HRESULT WINAPI device_SetActionMap(IDirectInputDevice8A *self, LPDIACTIONFORMATA format,
                                           LPCSTR user, DWORD flags)
 {
-    (void)self; (void)format; (void)user; (void)flags;
-    NFSU2_STUB("dinput SetActionMap");
-    return DIERR_UNSUPPORTED;
+    struct dinput_device *device = (struct dinput_device *)self;
+    unsigned int mine = device_semantic_class(device);
+    DWORD i;
+
+    (void)user; (void)flags;
+    if (!format || !format->rgoAction)
+        return DIERR_INVALIDPARAM;
+    if (format->dwSize != sizeof(*format) || format->dwActionSize != sizeof(DIACTIONA))
+        return DIERR_INVALIDPARAM;
+    if (format->dwDataSize < format->dwNumActions * sizeof(DWORD)) {
+        /* The one-DWORD-per-action layout that action_offset assumes. If a caller
+         * ever disagrees, this says so instead of writing outside its buffer. */
+        nfsu2_shim_trace("dinput SetActionMap: dwDataSize %lu is too small for %lu "
+                         "actions - not binding",
+                         (unsigned long)format->dwDataSize,
+                         (unsigned long)format->dwNumActions);
+        return DIERR_INVALIDPARAM;
+    }
+
+    device->action_count = 0;
+    for (i = 0; i < format->dwNumActions; i++) {
+        const DIACTIONA *action = &format->rgoAction[i];
+        unsigned char low = (unsigned char)(action->dwSemantic & 0xffu);
+        struct dinput_action *entry;
+
+        if (SEMANTIC_CLASS(action->dwSemantic) != mine || !low)
+            continue;
+        if (mine == SEMANTIC_KEYBOARD &&
+            nfsu2_sdl_scancode_from_dik(low) == SDL_SCANCODE_UNKNOWN)
+            continue;
+        if (device->action_count == DINPUT_MAX_ACTIONS) {
+            nfsu2_shim_trace("dinput SetActionMap: more than %d actions for one "
+                             "device; the rest are not bound", DINPUT_MAX_ACTIONS);
+            break;
+        }
+        entry = &device->actions[device->action_count++];
+        entry->offset = action_offset(i);
+        entry->app_data = action->uAppData;
+        entry->dik = low;
+    }
+
+    /* The buffer the game will read, and the buffered mode it asked for in the same
+     * structure - DIPROP_BUFFERSIZE is not used on an action-mapped device. */
+    device->state_size = format->dwDataSize;
+    if (format->dwBufferSize) {
+        device->buffer_size = format->dwBufferSize;
+        if (device->buffer_size > DINPUT_BUFFER_CAPACITY)
+            device->buffer_size = DINPUT_BUFFER_CAPACITY;
+    }
+
+    nfsu2_shim_trace("dinput SetActionMap: %s bound %d of %lu action(s), state %lu "
+                     "bytes, buffer %lu",
+                     nfsu2_dinput_kind_name(device->kind), device->action_count,
+                     (unsigned long)format->dwNumActions,
+                     (unsigned long)device->state_size,
+                     (unsigned long)device->buffer_size);
+    if (device->action_count == 0)
+        return DI_NOEFFECT;
+    return DI_OK;
 }
 
 static HRESULT WINAPI device_GetImageInfo(IDirectInputDevice8A *self,

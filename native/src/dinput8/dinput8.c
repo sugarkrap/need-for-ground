@@ -110,8 +110,50 @@ static HRESULT WINAPI dinput_CreateDevice(IDirectInput8A *self, REFGUID guid,
     if (!device)
         return DIERR_OUTOFMEMORY;
 
+    nfsu2_shim_trace("dinput CreateDevice: %s", nfsu2_dinput_kind_name(device->kind));
     *out = (LPDIRECTINPUTDEVICE8A)device;
     return DI_OK;
+}
+
+/*
+ * The DIDEVICEINSTANCE for one of our devices. Shared by the two enumerators so a
+ * device describes itself the same way however it was found - a game that matches
+ * the instance GUID from one enumeration against the other would otherwise see two
+ * different devices.
+ */
+static void fill_instance(DIDEVICEINSTANCEA *instance, enum dinput_device_kind kind,
+                          int joystick_index)
+{
+    const char *name;
+
+    memset(instance, 0, sizeof(*instance));
+    instance->dwSize = sizeof(*instance);
+
+    switch (kind) {
+    case DINPUT_KEYBOARD:
+        instance->guidInstance = GUID_SysKeyboard;
+        instance->guidProduct = GUID_SysKeyboard;
+        instance->dwDevType = DI8DEVTYPE_KEYBOARD | (DI8DEVTYPEKEYBOARD_PCENH << 8);
+        name = "Keyboard";
+        break;
+    case DINPUT_MOUSE:
+        instance->guidInstance = GUID_SysMouse;
+        instance->guidProduct = GUID_SysMouse;
+        instance->dwDevType = DI8DEVTYPE_MOUSE | (DI8DEVTYPEMOUSE_TRADITIONAL << 8);
+        name = "Mouse";
+        break;
+    default:
+        joystick_guid(joystick_index, &instance->guidInstance);
+        joystick_guid(joystick_index, &instance->guidProduct);
+        instance->dwDevType = DI8DEVTYPE_JOYSTICK | (DI8DEVTYPEJOYSTICK_STANDARD << 8);
+        name = SDL_JoystickNameForIndex(joystick_index);
+        if (!name)
+            name = "Joystick";
+        break;
+    }
+
+    snprintf(instance->tszInstanceName, sizeof(instance->tszInstanceName), "%s", name);
+    snprintf(instance->tszProductName, sizeof(instance->tszProductName), "%s", name);
 }
 
 static HRESULT WINAPI dinput_EnumDevices(IDirectInput8A *self, DWORD device_type,
@@ -136,25 +178,13 @@ static HRESULT WINAPI dinput_EnumDevices(IDirectInput8A *self, DWORD device_type
     want_sticks = (device_type == DI8DEVCLASS_ALL || device_type == DI8DEVCLASS_GAMECTRL);
 
     if (want_keyboard) {
-        memset(&instance, 0, sizeof(instance));
-        instance.dwSize = sizeof(instance);
-        instance.guidInstance = GUID_SysKeyboard;
-        instance.guidProduct = GUID_SysKeyboard;
-        instance.dwDevType = DI8DEVTYPE_KEYBOARD | (DI8DEVTYPEKEYBOARD_PCENH << 8);
-        snprintf(instance.tszInstanceName, sizeof(instance.tszInstanceName), "Keyboard");
-        snprintf(instance.tszProductName, sizeof(instance.tszProductName), "Keyboard");
+        fill_instance(&instance, DINPUT_KEYBOARD, -1);
         if (callback(&instance, ref) == DIENUM_STOP)
             return DI_OK;
     }
 
     if (want_mouse) {
-        memset(&instance, 0, sizeof(instance));
-        instance.dwSize = sizeof(instance);
-        instance.guidInstance = GUID_SysMouse;
-        instance.guidProduct = GUID_SysMouse;
-        instance.dwDevType = DI8DEVTYPE_MOUSE | (DI8DEVTYPEMOUSE_TRADITIONAL << 8);
-        snprintf(instance.tszInstanceName, sizeof(instance.tszInstanceName), "Mouse");
-        snprintf(instance.tszProductName, sizeof(instance.tszProductName), "Mouse");
+        fill_instance(&instance, DINPUT_MOUSE, -1);
         if (callback(&instance, ref) == DIENUM_STOP)
             return DI_OK;
     }
@@ -166,17 +196,7 @@ static HRESULT WINAPI dinput_EnumDevices(IDirectInput8A *self, DWORD device_type
         }
         count = SDL_NumJoysticks();
         for (i = 0; i < count && i < 16; i++) {
-            const char *name = SDL_JoystickNameForIndex(i);
-
-            memset(&instance, 0, sizeof(instance));
-            instance.dwSize = sizeof(instance);
-            joystick_guid(i, &instance.guidInstance);
-            joystick_guid(i, &instance.guidProduct);
-            instance.dwDevType = DI8DEVTYPE_JOYSTICK | (DI8DEVTYPEJOYSTICK_STANDARD << 8);
-            snprintf(instance.tszInstanceName, sizeof(instance.tszInstanceName), "%s",
-                     name ? name : "Joystick");
-            snprintf(instance.tszProductName, sizeof(instance.tszProductName), "%s",
-                     name ? name : "Joystick");
+            fill_instance(&instance, DINPUT_JOYSTICK, i);
             if (callback(&instance, ref) == DIENUM_STOP)
                 return DI_OK;
         }
@@ -224,16 +244,137 @@ static HRESULT WINAPI dinput_FindDevice(IDirectInput8A *self, REFGUID guid, LPCS
     return DIERR_DEVICENOTREG;
 }
 
+/*
+ * Report what the game is asking to bind, once. This exists because the previous
+ * comment here - "games that use it fall back to explicit binding" - was wrong
+ * about this one, and there was no way to tell from a run: the game asks for its
+ * keyboard *only* through action mapping, never creates a keyboard device, and so a
+ * stubbed enumerator produced a game with no keyboard and no diagnostic.
+ *
+ * The semantic layout is not documented as a bit field, but it reads straight off
+ * the constants in dinput.h:
+ *
+ *   DIKEYBOARD_ESCAPE     = DIK_ESCAPE | 0x81000400   keyboard, low byte is the DIK
+ *   DIMOUSE_XAXIS         = DIMOFS_X   | 0x82000300   mouse, low byte is an offset
+ *   DIJOFS-based          = 0x83......                joystick
+ *   DIAXIS_DRIVINGR_STEER = 0x01008a01                genre-relative
+ *
+ * so the top byte says which class of device can service the action, and anything
+ * below 0x80 there is a genre semantic that has to go through the genre's default
+ * mapping instead. Which of those this game uses decides how much work the rest is,
+ * so it is printed rather than assumed. (It is all keyboard, as it turns out.)
+ *
+ * The macros live in dinput8_internal.h, shared with the device that binds them.
+ */
+static const char *semantic_class_name(DWORD semantic)
+{
+    switch (SEMANTIC_CLASS(semantic)) {
+    case SEMANTIC_KEYBOARD: return "keyboard";
+    case SEMANTIC_MOUSE:    return "mouse";
+    case SEMANTIC_JOYSTICK: return "joystick";
+    default:                return "genre";
+    }
+}
+
+static void dump_action_format(const DIACTIONFORMATA *format)
+{
+    static int dumped;
+    DWORD i;
+
+    if (dumped || !nfsu2_shim_trace_enabled())
+        return;
+    dumped = 1;
+
+    nfsu2_shim_trace("dinput action map \"%s\": %lu action(s), genre 0x%08lx, "
+                     "dwDataSize=%lu, dwBufferSize=%lu, axis range %ld..%ld",
+                     format->tszActionMap, (unsigned long)format->dwNumActions,
+                     (unsigned long)format->dwGenre, (unsigned long)format->dwDataSize,
+                     (unsigned long)format->dwBufferSize,
+                     (long)format->lAxisMin, (long)format->lAxisMax);
+    if (!format->rgoAction)
+        return;
+    for (i = 0; i < format->dwNumActions; i++) {
+        const DIACTIONA *action = &format->rgoAction[i];
+
+        nfsu2_shim_trace("  action %2lu: semantic 0x%08lx (%s, low 0x%02lx) "
+                         "flags 0x%lx appdata 0x%lx  \"%s\"",
+                         (unsigned long)i, (unsigned long)action->dwSemantic,
+                         semantic_class_name(action->dwSemantic),
+                         (unsigned long)(action->dwSemantic & 0xffu),
+                         (unsigned long)action->dwFlags,
+                         (unsigned long)action->uAppData,
+                         (action->dwFlags & DIA_APPMAPPED) || !action->lptszActionName
+                             ? "" : action->lptszActionName);
+    }
+}
+
+/*
+ * Offer the game a device for every class its action format mentions.
+ *
+ * The devices handed to the callback are DirectInput's, not the caller's: an
+ * application AddRefs the ones it keeps. We hold our reference rather than
+ * releasing after the callback, because real DirectInput caches these objects and a
+ * game that relies on that would be left with a pointer to freed memory. A handful
+ * of device objects for the life of the process is the cheaper mistake.
+ */
 static HRESULT WINAPI dinput_EnumDevicesBySemantics(IDirectInput8A *self, LPCSTR user,
                                                     LPDIACTIONFORMATA format,
                                                     LPDIENUMDEVICESBYSEMANTICSCBA callback,
                                                     LPVOID ref, DWORD flags)
 {
-    (void)self; (void)user; (void)format; (void)callback; (void)ref; (void)flags;
-    /* Action-mapping (the "semantics" API) is not implemented; see
-     * device_SetActionMap. Games that use it fall back to explicit binding. */
-    NFSU2_STUB("DirectInput8 EnumDevicesBySemantics");
-    return DIERR_UNSUPPORTED;
+    static struct dinput_device *cached[3];
+    enum dinput_device_kind order[3] = { DINPUT_KEYBOARD, DINPUT_MOUSE, DINPUT_JOYSTICK };
+    DIDEVICEINSTANCEA instance;
+    int sticks = 0;
+    int i;
+
+    (void)self; (void)user; (void)flags;
+    if (!callback || !format)
+        return DIERR_INVALIDPARAM;
+    if (format->dwSize != sizeof(*format) || format->dwActionSize != sizeof(DIACTIONA)) {
+        nfsu2_shim_trace("dinput EnumDevicesBySemantics: unexpected structure sizes "
+                         "(dwSize=%lu, dwActionSize=%lu)",
+                         (unsigned long)format->dwSize, (unsigned long)format->dwActionSize);
+        return DIERR_INVALIDPARAM;
+    }
+    if (nfsu2_dinput_ensure_sdl() != 0)
+        return DIERR_NOTINITIALIZED;
+
+    dump_action_format(format);
+
+    if (SDL_InitSubSystem(SDL_INIT_JOYSTICK) == 0)
+        sticks = SDL_NumJoysticks();
+
+    /*
+     * Keyboard first, then mouse, then the first stick. DirectInput enumerates
+     * "most suitable first" and a racing game would rank a wheel highest, but a
+     * game that binds only what it is offered first must not lose its keyboard -
+     * and every caller is free to keep all of them.
+     */
+    for (i = 0; i < 3; i++) {
+        enum dinput_device_kind kind = order[i];
+        DWORD remaining;
+
+        if (kind == DINPUT_JOYSTICK && sticks <= 0)
+            continue;
+        if (!cached[i]) {
+            cached[i] = nfsu2_dinput_device_create(kind, kind == DINPUT_JOYSTICK ? 0 : -1);
+            if (!cached[i])
+                continue;
+        }
+
+        fill_instance(&instance, kind, 0);
+        /* How many more will follow this one, which is what dwRemaining means. */
+        remaining = (kind == DINPUT_KEYBOARD) ? (sticks > 0 ? 2 : 1)
+                  : (kind == DINPUT_MOUSE)    ? (sticks > 0 ? 1 : 0)
+                                              : 0;
+        nfsu2_shim_trace("dinput EnumDevicesBySemantics: offering %s",
+                         nfsu2_dinput_kind_name(kind));
+        if (callback(&instance, (LPDIRECTINPUTDEVICE8A)cached[i],
+                     DIEDBS_MAPPEDPRI1, remaining, ref) == DIENUM_STOP)
+            break;
+    }
+    return DI_OK;
 }
 
 static HRESULT WINAPI dinput_ConfigureDevices(IDirectInput8A *self,
