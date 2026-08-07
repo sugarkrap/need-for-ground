@@ -84,6 +84,36 @@ static int fail(char *error, size_t size, int code, const char *fmt, ...)
 }
 
 /*
+ * How many bytes section `index` may occupy before it would run into whichever
+ * section starts next in memory (or the end of the image, for the last one).
+ *
+ * The section table is not required to be sorted by VirtualAddress, so this takes
+ * the smallest start above this section's rather than trusting index + 1.
+ */
+static unsigned int section_room(const unsigned char *file, unsigned int section_table,
+                                 unsigned short section_count, int index,
+                                 unsigned int image_size)
+{
+    const unsigned char *self = file + section_table +
+                                (unsigned int)index * SECTION_HEADER_SIZE;
+    unsigned int start = read32(self + SECTION_VIRTUAL_ADDRESS);
+    unsigned int limit = image_size;
+    int i;
+
+    if (start >= image_size)
+        return 0;
+    for (i = 0; i < section_count; i++) {
+        const unsigned char *other = file + section_table +
+                                     (unsigned int)i * SECTION_HEADER_SIZE;
+        unsigned int address = read32(other + SECTION_VIRTUAL_ADDRESS);
+
+        if (i != index && address > start && address < limit)
+            limit = address;
+    }
+    return limit - start;
+}
+
+/*
  * Tell the shim where the image landed, so GetModuleHandleA(NULL) can return the
  * image base - which is what an HMODULE *is* on Windows, and what MSVC's CRT
  * startup reads a DOS header out of. Weak, like nfsu2_winsock_lookup above, so a
@@ -203,16 +233,44 @@ int nfsu2_pe_load(const char *path, struct nfsu2_pe_image *out, char *error, siz
         unsigned int raw_size = read32(header + SECTION_RAW_SIZE);
         unsigned int raw_pointer = read32(header + SECTION_RAW_POINTER);
         unsigned char *destination = (unsigned char *)mapping + virtual_address;
-        unsigned int copy = raw_size < virtual_size ? raw_size : virtual_size;
+        unsigned int room = section_room(file, section_table, section_count, i, image_size);
+        unsigned int copy = raw_size;
 
         if (virtual_address + virtual_size > image_size)
             continue; /* a section outside SizeOfImage is malformed; skip it */
-        if (raw_pointer + copy > (unsigned int)st.st_size)
-            continue;
+
+        /*
+         * All of SizeOfRawData, not min(SizeOfRawData, VirtualSize).
+         *
+         * VirtualSize is how much of the section is meaningful content;
+         * SizeOfRawData is what the linker actually wrote, rounded up to
+         * FileAlignment. When the second is larger, the difference is padding -
+         * and Windows maps it, because sections are mapped in whole pages and the
+         * padding shares the section's last page. Programs rely on that: it is
+         * where a hot-patching mod puts its code.
+         *
+         * This executable has one baked in. A steering-wheel wrapper overwrites
+         * the prologue at 0x5c4c20 with `jmp 0x7829db`, and 0x7829db is 0x2ea
+         * bytes past .text's VirtualSize (0x7826f1) but well inside its
+         * SizeOfRawData. Truncating the copy left that whole region zeroed, so
+         * the detour landed in a field of `add [eax],al`, slid forward through it
+         * and died when the instruction fetch crossed into non-executable .rdata.
+         * Nothing in between suggested a loader problem.
+         *
+         * Clamped to the room before the next section so a malformed or
+         * deliberately overlapping SizeOfRawData cannot scribble over it.
+         */
+        if (copy > room)
+            copy = room;
+        if (raw_pointer + copy > (unsigned int)st.st_size) {
+            if (raw_pointer >= (unsigned int)st.st_size)
+                continue;
+            copy = (unsigned int)st.st_size - raw_pointer;
+        }
 
         if (copy)
             memcpy(destination, file + raw_pointer, copy);
-        /* The mapping is fresh anonymous memory, so the VirtualSize tail is
+        /* The mapping is fresh anonymous memory, so any tail past the copy is
          * already zero - .bss needs nothing further. */
     }
 
@@ -222,10 +280,20 @@ int nfsu2_pe_load(const char *path, struct nfsu2_pe_image *out, char *error, siz
         const unsigned char *header = file + section_table + (unsigned int)i * SECTION_HEADER_SIZE;
         unsigned int virtual_size = read32(header + SECTION_VIRTUAL_SIZE);
         unsigned int virtual_address = read32(header + SECTION_VIRTUAL_ADDRESS);
+        unsigned int raw_size = read32(header + SECTION_RAW_SIZE);
         unsigned int characteristics = read32(header + SECTION_CHARACTERISTICS);
         unsigned char *destination = (unsigned char *)mapping + virtual_address;
-        unsigned int length = (virtual_size + page_size - 1) & ~(page_size - 1);
+        /* The same extent the copy above used, so a section whose raw data runs
+         * past its VirtualSize gets the protection its content needs - the mod
+         * code in .text's padding has to be executable, not just present. */
+        unsigned int extent = raw_size > virtual_size ? raw_size : virtual_size;
+        unsigned int room = section_room(file, section_table, section_count, i, image_size);
+        unsigned int length;
         int protection = 0;
+
+        if (extent > room)
+            extent = room;
+        length = (extent + page_size - 1) & ~(page_size - 1);
 
         if (!length || virtual_address + length > image_size)
             continue;
