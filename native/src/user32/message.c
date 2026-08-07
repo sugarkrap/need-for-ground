@@ -72,6 +72,37 @@ static BOOL queue_push(struct msg_queue *q, const MSG *msg)
     BOOL ok = TRUE;
 
     pthread_mutex_lock(&q->lock);
+
+    /*
+     * WM_MOUSEMOVE is coalesced, which is what Windows does and not an
+     * optimisation. The mouse has one current position; a queue holding two
+     * hundred stale ones is a worse account of it, and it costs the game two
+     * hundred pumps to work through them.
+     *
+     * It also stops the queue overflowing, and overflow here was not a
+     * theoretical concern: loading a track pumps slowly enough that SDL's motion
+     * events filled all 256 slots, after which *every* message was dropped -
+     * 1505 of them in one run, including WM_MOVE and anything else that mattered.
+     * Coalescing at the source is the fix; a bigger queue would only have raised
+     * the number.
+     *
+     * The newest position goes into the oldest pending slot, so a move that
+     * happened before a click still arrives before it.
+     */
+    if (msg->message == WM_MOUSEMOVE) {
+        int i;
+
+        for (i = 0; i < q->count; i++) {
+            MSG *pending = &q->items[(q->head + i) % QUEUE_CAPACITY];
+
+            if (pending->message == WM_MOUSEMOVE && pending->hwnd == msg->hwnd) {
+                *pending = *msg;
+                pthread_mutex_unlock(&q->lock);
+                return TRUE;
+            }
+        }
+    }
+
     if (q->count == QUEUE_CAPACITY) {
         /* Dropping the newest keeps the oldest input in order, which is the
          * lesser evil for a queue that only overflows if nothing is pumping. */
