@@ -44,7 +44,8 @@ survives to report how the child died.
 
 Diagnostics that are off by default: `NFSU2_D3D9_GUARD_LOCKS=1` (a locked vertex or
 index buffer gets our memory with an unmapped page after it, so an overrun faults at
-the instruction), `NFSU2_D3D9_TRACE_STATE_BLOCKS=1` (every Begin/EndStateBlock).
+the instruction), `NFSU2_D3D9_TRACE_STATE_BLOCKS=1` (every Begin/EndStateBlock),
+`NFSU2_DSOUND_TRACE_LEVEL=1` (the peak level leaving the mixer, every two seconds).
 
 ## Open problems
 
@@ -52,9 +53,15 @@ the instruction), `NFSU2_D3D9_TRACE_STATE_BLOCKS=1` (every Begin/EndStateBlock).
    `BeginStateBlock` failures in a trace are *not* the cause - see below - and that a
    trace of a run that reaches a race is the missing evidence, since the in-race HUD
    and its textures are never loaded by a run that only reaches the menus.
-2. **Audio is not implemented.** `DirectSoundCreate` answers `DSERR_NODRIVER`, which
-   is the honest answer for a machine with no sound card and a path the game handles.
-   `src/dsound/dsound.c` is where the real thing goes.
+2. **Audio is implemented but the game plays none of it.** DirectSound is real now
+   (`src/dsound/`), and everything the game asks of it works: it probes the speaker
+   formats, settles on stereo, creates one 88192-byte streaming buffer, clears it and
+   starts it looping. Then it never writes into it and *never polls
+   GetCurrentPosition*, so it is not in a streaming loop at all - the cause is above
+   DirectSound, in the engine deciding it has nothing to play. It opens
+   `sdata/sdat.viv` and keeps it open, creates two events and a thread for streaming,
+   and opens nothing from `SOUND/`. `NFSU2_DSOUND_TRACE_LEVEL=1` reports the peak
+   output level, which is how "playing" and "audible" were told apart.
 3. **Two of the 53 mapped actions do not bind**: the semantics for "Debug Camera
    Turbo" and "Debug Camera Super Turbo" name DIK codes `0xea` and `0xe5`, which are
    not in `dik_map.c`. Debug controls, reported as unmapped rather than mis-bound.
@@ -127,6 +134,14 @@ Four lessons worth keeping:
   reads its keyboard: it never creates a keyboard device. All 53 of its actions are
   `DIKEYBOARD_*` semantics, so the low byte is a DIK code and no genre default-mapping
   tables are needed.
+- **DirectSound** (`src/dsound/`) over one SDL2 device, mixing every playing buffer
+  and converting from each one's own rate and format. The play cursor is advanced by
+  what the audio callback consumed, which makes the device the clock, and the write
+  cursor is derived from it with the committed lead ahead - equal cursors compute to
+  zero writable space in every streaming engine's arithmetic.
+- **Multimedia timers** (`src/winmm/mmtimer.c`), one service thread with a TEB. This
+  game's audio engine pumps itself from a 1 ms one-shot re-armed inside its own
+  callback, which is why both of those details matter.
 - **Ported game functions** (`native/game/manifest.yaml` plus
   `tools/import_decompiled.ts`): 10 functions, each verified twice - against a
   reference and against the original machine code with identical inputs. The
@@ -148,6 +163,12 @@ Four lessons worth keeping:
 - **Keep the Ghidra project somewhere durable.** The first one lived in `/tmp` and did
   not survive a reboot. It is at `~/ghidra-projects/NFSU2` now, with `pyghidra` in a
   venv beside it.
+- **A callback into game code needs a TEB, wherever it is called from.** `__try`
+  touches `fs:[0]`. `CreateThread` got this right from the start and the multimedia
+  timers did not, and the symptom was silent audio with no fault anywhere.
+- **`INITGUID` is per-program, not per-DLL.** It applies to every GUID in every header
+  the translation unit transitively includes, so two units defining it collide on
+  dozens of unrelated COM symbols. `src/com/guids.c` is the one place.
 - **We hand the game paths in one alphabet and must accept them back in another.**
   Two bugs were this: the VFS search path, and `SHGetFolderPathA` returning a host
   path the game then appends `\NFS Underground 2\` to. `path.c` now splits on the
@@ -160,7 +181,10 @@ Four lessons worth keeping:
    drive one), and check first whether the in-race HUD's own files
    (`GLOBAL/HUD_CustomTextures_*.bin`) are opened and what D3D9 calls fail.
 2. Confirm saving works, now that the save directory resolves.
-3. Audio, which is the largest remaining gap and the most visible one.
+3. Audio: find why the engine never asks for a sound. It initialises fully and its
+   pump runs, so the question is what its higher level is waiting for - start from
+   the fact that it opens `sdata/sdat.viv`, holds it, and then opens nothing from
+   `SOUND/`.
 4. Re-export the renderer scope from Ghidra now that the vtable method definitions
    carry argument counts, then widen the manifest into `DIRECTX_SCOPE.md`'s 99
    functions - one at a time, differential test each.
