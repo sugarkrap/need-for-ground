@@ -126,8 +126,10 @@ recording.
 
 ## Next steps, in the order I would take them
 
-1. Find the corruption - hypothesis 2 above is the cheapest test, hypothesis 1 the
-   most likely to be decisive.
+1. Find the corruption. Extending the guard-lock machinery to `LockRect` (item 1 in
+   the list above) is both the cheapest test and the one that reuses what is already
+   built; `MALLOC_PERTURB_` for the use-after-free case (item 2) costs nothing at all
+   and can be run first.
 2. Fix `BeginStateBlock`, which may fall out of the same cause.
 3. Re-export the renderer scope from Ghidra now that the vtable method definitions
    carry argument counts, then widen the manifest into `DIRECTX_SCOPE.md`'s 99
