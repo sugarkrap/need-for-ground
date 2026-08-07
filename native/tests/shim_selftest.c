@@ -198,6 +198,40 @@ int main(void)
     CHECK(WaitForSingleObject(ev, 0) == WAIT_TIMEOUT, "ResetEvent clears it");
     CloseHandle(ev);
 
+    /*
+     * A Win32 mutex is owned and recursive, which an auto-reset event is not. Getting
+     * this wrong froze the entire game: the owning thread's second acquisition waited
+     * for a signal only that same thread could give, and every thread in the process
+     * ended up parked on a futex at zero CPU.
+     */
+    {
+        HANDLE mutex = CreateMutexA(NULL, FALSE, NULL);
+
+        CHECK(mutex != NULL, "CreateMutexA");
+        CHECK(WaitForSingleObject(mutex, 0) == WAIT_OBJECT_0, "an unowned mutex is taken");
+        CHECK(WaitForSingleObject(mutex, 0) == WAIT_OBJECT_0,
+              "the owner takes it again immediately (recursive)");
+        CHECK(WaitForSingleObject(mutex, 0) == WAIT_OBJECT_0, "and again, three deep");
+        /* Held until every acquisition is matched. */
+        CHECK(ReleaseMutex(mutex) && ReleaseMutex(mutex),
+              "two releases leave it still held");
+        CHECK(WaitForSingleObject(mutex, 0) == WAIT_OBJECT_0,
+              "still ours after an unmatched release");
+        CHECK(ReleaseMutex(mutex) && ReleaseMutex(mutex), "the last releases let it go");
+        CHECK(!ReleaseMutex(mutex), "releasing a mutex we do not own fails");
+        CloseHandle(mutex);
+
+        /* bInitialOwner means held before any wait, so the caller's own release
+         * pairs with it. */
+        mutex = CreateMutexA(NULL, TRUE, NULL);
+        CHECK(WaitForSingleObject(mutex, 0) == WAIT_OBJECT_0,
+              "an initially-owned mutex is already ours");
+        CHECK(ReleaseMutex(mutex) && ReleaseMutex(mutex),
+              "the initial ownership needs releasing too");
+        CHECK(!ReleaseMutex(mutex), "and then it is no longer owned");
+        CloseHandle(mutex);
+    }
+
     thread = CreateThread(NULL, 0, thread_body, &counter, 0, NULL);
     CHECK(thread != NULL, "CreateThread with a WINAPI entry point");
     CHECK(WaitForSingleObject(thread, 5000) == WAIT_OBJECT_0, "thread finished");

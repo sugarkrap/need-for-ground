@@ -94,6 +94,21 @@ struct nfsu2_sync {
     int signalled;
     int manual_reset;
     char *name;
+
+    /*
+     * Mutexes only. A Win32 mutex is *owned* and *recursive*: the thread holding it
+     * can wait on it again and is satisfied immediately, and it stays held until
+     * ReleaseMutex has been called once for every acquisition.
+     *
+     * Without this a mutex behaved like an auto-reset event, so the second
+     * acquisition by the owning thread waited for a signal only that same thread
+     * could give - and every thread in the process ended up parked on a futex with
+     * the game consuming no CPU at all. This game's audio engine is the first thing
+     * to take one of its locks recursively, which is why implementing DirectSound
+     * appeared to be what froze it.
+     */
+    DWORD owner;
+    unsigned int recursion;
 };
 
 void nfsu2_sync_destroy(struct nfsu2_object *obj)
@@ -133,8 +148,16 @@ HANDLE WINAPI CreateEventA(LPSECURITY_ATTRIBUTES sa, BOOL manual, BOOL initial, 
 
 HANDLE WINAPI CreateMutexA(LPSECURITY_ATTRIBUTES sa, BOOL owned, LPCSTR name)
 {
+    struct nfsu2_sync *s = sync_create(NFSU2_OBJ_MUTEX, FALSE, !owned, name);
+
     (void)sa;
-    return (HANDLE)sync_create(NFSU2_OBJ_MUTEX, FALSE, !owned, name);
+    if (s && owned) {
+        /* bInitialOwner: held by the caller, at depth one, before it waits at all -
+         * so its matching ReleaseMutex has something to release. */
+        s->owner = GetCurrentThreadId();
+        s->recursion = 1;
+    }
+    return (HANDLE)s;
 }
 
 BOOL WINAPI SetEvent(HANDLE h)
@@ -168,12 +191,23 @@ BOOL WINAPI ResetEvent(HANDLE h)
 BOOL WINAPI ReleaseMutex(HANDLE h)
 {
     struct nfsu2_sync *s = nfsu2_obj_get(h, NFSU2_OBJ_MUTEX);
+    DWORD self = GetCurrentThreadId();
 
     if (!s)
         return FALSE;
     pthread_mutex_lock(&s->lock);
-    s->signalled = 1;
-    pthread_cond_signal(&s->cond);
+    if (s->owner != self) {
+        /* Windows refuses this, and refusing it is what stops a thread that never
+         * owned the mutex from handing it to someone else. */
+        pthread_mutex_unlock(&s->lock);
+        SetLastError(ERROR_NOT_OWNER);
+        return FALSE;
+    }
+    if (--s->recursion == 0) {
+        s->owner = 0;
+        s->signalled = 1;
+        pthread_cond_signal(&s->cond);
+    }
     pthread_mutex_unlock(&s->lock);
     return TRUE;
 }
@@ -181,8 +215,17 @@ BOOL WINAPI ReleaseMutex(HANDLE h)
 static DWORD sync_wait(struct nfsu2_sync *s, DWORD timeout_ms)
 {
     DWORD result = WAIT_OBJECT_0;
+    DWORD self = GetCurrentThreadId();
 
     pthread_mutex_lock(&s->lock);
+
+    /* Already ours: satisfied immediately, one deeper. See the struct comment. */
+    if (s->obj.kind == NFSU2_OBJ_MUTEX && s->owner == self) {
+        s->recursion++;
+        pthread_mutex_unlock(&s->lock);
+        return WAIT_OBJECT_0;
+    }
+
     while (!s->signalled) {
         if (timeout_ms == 0) {
             result = WAIT_TIMEOUT;
@@ -208,6 +251,11 @@ static DWORD sync_wait(struct nfsu2_sync *s, DWORD timeout_ms)
     /* Auto-reset events and mutexes consume the signal. */
     if (result == WAIT_OBJECT_0 && !s->manual_reset)
         s->signalled = 0;
+    /* Taking a mutex makes this thread its owner, at depth one. */
+    if (result == WAIT_OBJECT_0 && s->obj.kind == NFSU2_OBJ_MUTEX) {
+        s->owner = self;
+        s->recursion = 1;
+    }
     pthread_mutex_unlock(&s->lock);
     return result;
 }
