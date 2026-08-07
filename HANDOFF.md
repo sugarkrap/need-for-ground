@@ -20,7 +20,7 @@ are - not in getting it to start.
 cd native
 meson setup build32 --cross-file cross/linux32.txt -Dnfsu2_exe="<path>/speed2.exe"
 ninja -C build32
-meson test -C build32                 # 8 suites, must be green with zero diagnostics
+meson test -C build32                 # 9 suites, must be green with zero diagnostics
 
 # the game itself
 NFSU2_DRIVE_J=cdrom:<dir with BIN.DAT> \
