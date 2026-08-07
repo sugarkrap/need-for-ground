@@ -37,6 +37,9 @@ endif
 # coverage per directory, so the layout is also the bookkeeping.
 win32_sources = files(
   'src/advapi32/registry.c',
+  # The DirectX GUID constants, instantiated exactly once for the whole program -
+  # see the file for why it cannot be done per-DLL.
+  'src/com/guids.c',
   'src/gdi32/gdi.c',
   'src/shell32/shell.c',
   'src/tapi32/tapi.c',
@@ -62,9 +65,10 @@ win32_sources = files(
   'src/win32/time.c',
   'src/win32/toolhelp.c',
   'src/win32/volume.c',
-  # Audio is not implemented; this answers DSERR_NODRIVER instead of leaving the
-  # game's only dsound import unresolved and therefore callable garbage.
-  'src/dsound/dsound.c',
+  # The no-audio answer, weak, so the SDL2-backed dsound library below overrides
+  # it. Without either, the game's only dsound import is unresolved and its own
+  # thunk jumps to the ordinal the file left in the IAT slot.
+  'src/dsound/nodriver.c',
   'src/winmm/mmtimer.c',
   'src/ws2_32/posix_net.c',
   'src/ws2_32/winsock.c',
@@ -72,6 +76,8 @@ win32_sources = files(
 
 thread_dep = dependency('threads')
 dl_dep = cc.find_library('dl', required : false)
+# powf, for the mixer's decibel-to-gain conversion.
+m_dep = cc.find_library('m', required : false)
 
 libnfsu2_win32 = static_library('nfsu2_win32',
   win32_sources,
@@ -131,6 +137,27 @@ if sdl2.found()
   nfsu2_dinput8_dep = declare_dependency(
     link_whole : libnfsu2_dinput8,
     dependencies : [nfsu2_user32_dep])
+
+  # --- dsound (SDL2-backed) ---------------------------------------------
+  # Separate from the core shim because it needs SDL2's audio device, and separate
+  # from dinput8 because audio and input fail independently. Its DirectSoundCreate
+  # and nfsu2_dsound_lookup are strong and override the weak no-driver answers in
+  # src/dsound/nodriver.c; link_whole because those are the only references and a
+  # weak definition would otherwise be left in place.
+  libnfsu2_dsound = static_library('nfsu2_dsound',
+    files(
+      'src/dsound/buffer.c',
+      'src/dsound/dsound.c',
+      'src/dsound/mixer.c',
+    ),
+    include_directories : [nfsu2_inc, wine_inc],
+    dependencies : [sdl2, thread_dep],
+    c_args : ['-D_GNU_SOURCE'],
+    install : false)
+
+  nfsu2_dsound_dep = declare_dependency(
+    link_whole : libnfsu2_dsound,
+    dependencies : [nfsu2_win32_dep, sdl2, m_dep])
 endif
 
 # --- shim selftest ------------------------------------------------------
@@ -192,6 +219,14 @@ if sdl2.found()
     export_dynamic : true,
     install : false)
   test('dinput8', dinput8_selftest, timeout : 120)
+
+  dsound_selftest = executable('nfsu2-dsound-selftest',
+    'tests/dsound_selftest.c',
+    dependencies : [nfsu2_dsound_dep],
+    c_args : ['-D_GNU_SOURCE'],
+    export_dynamic : true,
+    install : false)
+  test('dsound', dsound_selftest, timeout : 120)
 endif
 
 # --- ported game code ---------------------------------------------------
@@ -253,7 +288,8 @@ if target_bits == 32 and fs.is_file(meson.current_source_dir() / game_generated 
       # user32 and dinput8 too when SDL is available: without them the exe's IAT
       # cannot be filled for the windowing and input imports, and the coverage
       # number would understate what the shim can actually satisfy.
-      dependencies : sdl2.found() ? [nfsu2_dinput8_dep] : [nfsu2_win32_dep],
+      dependencies : sdl2.found() ? [nfsu2_dinput8_dep, nfsu2_dsound_dep]
+                                  : [nfsu2_win32_dep],
       include_directories : [nfsu2_inc, wine_inc, game_inc],
       c_args : ['-D_GNU_SOURCE'],
       export_dynamic : true,
@@ -315,7 +351,7 @@ if dxvk_d3d9.found() and sdl2.found()
     # and the game would get DXVK's cdecl export and fault on a movaps. Exactly the
     # shape of the --as-needed trap two commits ago.
     link_whole : [libnfsu2_d3d9_bridge],
-    dependencies : [nfsu2_dinput8_dep, dxvk_d3d9],
+    dependencies : [nfsu2_dinput8_dep, nfsu2_dsound_dep, dxvk_d3d9],
     include_directories : [nfsu2_inc, wine_inc],
     c_args : ['-D_GNU_SOURCE'],
     build_rpath : dxvk_lib_dir,
@@ -331,10 +367,9 @@ if dxvk_d3d9.found() and sdl2.found()
     executable('nfsu2-game-render',
       'src/host/game_render.c',
       link_with : [libnfsu2_game, libnfsu2_loader],
-      # dinput8 rather than user32: it carries ddraw too, and this host is meant to
-      # resolve everything the platform layer can - which leaves DSOUND as the only
-      # unresolved import in the whole exe.
-      dependencies : [nfsu2_dinput8_dep, dxvk_d3d9],
+      # dinput8 rather than user32: it carries ddraw too, and dsound alongside it,
+      # so this host resolves every import in the whole exe.
+      dependencies : [nfsu2_dinput8_dep, nfsu2_dsound_dep, dxvk_d3d9],
       include_directories : [nfsu2_inc, wine_inc, game_inc],
       c_args : ['-D_GNU_SOURCE'],
       build_rpath : dxvk_lib_dir,

@@ -1,13 +1,11 @@
 /*
  * dinput8.c - DirectInput8Create and IDirectInput8A.
  *
- * INITGUID is defined here so this one translation unit instantiates the
- * GUID_SysKeyboard / GUID_SysMouse / IID_IDirectInput8A constants that
- * DEFINE_GUID otherwise only declares. On Windows they would come from
- * dxguid.lib; there is no such library here.
+ * The GUID constants this uses (GUID_SysKeyboard, GUID_SysMouse,
+ * IID_IDirectInput8A) are instantiated by src/com/guids.c, which is the one
+ * translation unit in the program that defines INITGUID. Doing it here as well is
+ * what broke the link when dsound arrived.
  */
-#define INITGUID
-
 #include "dinput8_internal.h"
 
 #include <stdlib.h>
