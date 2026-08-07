@@ -50,25 +50,35 @@ Heap corruption. glibc reports `malloc(): invalid size` / `unsorted double linke
 corrupted` from a worker thread, and the faulting address moves between runs while the
 *progress* does not (519 objects wrapped, 23 resources found, every run).
 
-Two classes are already eliminated **by instrumentation, not argument**:
+Four things are eliminated **by instrumentation, not argument**. All four checks are
+permanent, and all four stay silent:
 
 | ruled out | by | where |
 | --- | --- | --- |
 | a small write past a block we allocated | canary in the slack between the requested size and `malloc_usable_size` | `src/win32/heap.c` |
 | a lock request larger than its buffer | `GetDesc` audit in front of every buffer `Lock` | `src/d3d9_bridge/bridge.c` |
+| a write past a locked buffer *region* | `NFSU2_D3D9_GUARD_LOCKS=1` - the game gets our memory with an unmapped page after it, copied back at `Unlock` | `src/d3d9_bridge/bridge.c` |
+| `GetDeviceState` overflowing the caller's buffer | read: keyboard, mouse and joystick all clamp to the caller's size | `src/dinput8/device.c` |
 
-Both are permanent and both stay silent. What is left, in the order worth trying:
+The third is worth knowing about as a *tool*: with `NFSU2_D3D9_GUARD_LOCKS=1`, a write
+one byte past a locked buffer faults at the instruction that makes it, instead of
+surfacing as a corrupted arena in an unrelated thread later. It found nothing on
+vertex and index buffers; it has not been extended to `LockRect`.
 
-1. **A write past a locked *region*** (rather than past the request). Needs a guard
-   page after the locked range, not a canary - so the offending store faults where it
-   happens instead of at the next unrelated `malloc`.
-2. **`LockRect` and pitch.** A game that computes its own row stride instead of using
-   the returned pitch writes past the last row. Nothing built so far covers this, and
-   it is a classic port failure.
-3. **Our own shim writing past a game-supplied struct.** Wine's layout may be larger
-   than the 2004 SDK's for something the game passes in. Note that
-   `abi-layout-match` compares Wine against *DXVK* - never against the SDK the game
-   was actually built with. That suite is the obvious place to add the comparison.
+What is left, in the order worth trying:
+
+1. **`LockRect` and pitch.** A game that computes its own row stride instead of using
+   the returned pitch writes past the last row. The guard-lock machinery above is the
+   thing to extend - `LockRect` needs `pitch * height` from the surface descriptor
+   rather than a buffer size, and then it is the same trick.
+2. **Something other than a heap overrun**: a write into memory that has already been
+   freed, or a double free. Neither a canary nor a guard page sees those. glibc's
+   `MALLOC_PERTURB_` is the cheap probe.
+3. **Our own shim writing past some *other* game-supplied struct.** `GetDeviceState`
+   was the best candidate and is clean, but every `Get*` that fills a caller's buffer
+   deserves the same read. Note that `abi-layout-match` compares Wine against *DXVK* -
+   never against the 2004 SDK the game was built with, which is where a size
+   difference would come from.
 
 Also open, and possibly related: `IDirect3DDevice9::BeginStateBlock` fails repeatedly
 with `D3DERR_INVALIDCALL`, which is what DXVK returns when a state block is already

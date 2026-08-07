@@ -2201,6 +2201,8 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DIndexBuffer9_Lock(struct nfsu2_d3d9_
     audit_buffer_lock(self, 13, a1, a2);
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[11])(self->real, a1, a2, a3, a4);
 
+    guard_lock_post(self, 13, a1, a2, a3, result);
+
     if (result & 0x80000000u)
         nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DIndexBuffer9::Lock", result);
     return result;
@@ -2210,6 +2212,7 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DIndexBuffer9_Unlock(struct nfsu2_d3d
 {
     unsigned result;
 
+    guard_unlock_pre(self);
     result = ((unsigned (*)(void *))self->real_vtbl[12])(self->real);
 
     if (result & 0x80000000u)
@@ -3086,6 +3089,8 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVertexBuffer9_Lock(struct nfsu2_d3d9
     audit_buffer_lock(self, 13, a1, a2);
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[11])(self->real, a1, a2, a3, a4);
 
+    guard_lock_post(self, 13, a1, a2, a3, result);
+
     if (result & 0x80000000u)
         nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DVertexBuffer9::Lock", result);
     return result;
@@ -3095,6 +3100,7 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DVertexBuffer9_Unlock(struct nfsu2_d3
 {
     unsigned result;
 
+    guard_unlock_pre(self);
     result = ((unsigned (*)(void *))self->real_vtbl[12])(self->real);
 
     if (result & 0x80000000u)

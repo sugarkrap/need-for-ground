@@ -13,6 +13,8 @@
 #include <nfsu2/win32_shim.h>
 
 #include <pthread.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -185,6 +187,126 @@ static void audit_buffer_lock(struct nfsu2_d3d9_bridge *self, unsigned int getde
                          "%u-byte buffer - %llu byte(s) beyond it",
                          iface_name(self->iface), offset, size, capacity,
                          (unsigned long long)offset + size - capacity);
+    }
+}
+
+/* --- guarded locks: catch a write past a locked region ---------------------- */
+
+/*
+ * NFSU2_D3D9_GUARD_LOCKS=1 hands the game *our* memory for the duration of a buffer
+ * lock, with an unmapped page right after it, and copies the contents into DXVK's
+ * pointer at Unlock.
+ *
+ * Why a bounce buffer rather than a canary: the memory DXVK returns from Lock sits
+ * inside a larger allocation of its own, so there is nowhere safe to put a guard -
+ * and a canary only reports *that* something was written past the end, long after the
+ * instruction that did it. With an unmapped page, the offending store faults where it
+ * happens and the backtrace names the code. That is the difference between knowing
+ * there is a bug and knowing where it is.
+ *
+ * Off by default: it costs a copy per lock, and it changes what pointer the game sees.
+ */
+struct guarded_lock {
+    struct nfsu2_d3d9_bridge *owner;
+    void *mapping;        /* our region plus one unmapped page */
+    size_t mapping_size;
+    void *given;          /* what the game got: the end of our region, page-aligned */
+    void *real_bits;      /* what DXVK gave us */
+    size_t size;
+};
+
+#define MAX_GUARDED_LOCKS 32
+
+static struct guarded_lock g_guarded[MAX_GUARDED_LOCKS];
+static int g_guard_locks = -1;
+
+static int guard_locks_enabled(void)
+{
+    if (g_guard_locks < 0) {
+        const char *value = getenv("NFSU2_D3D9_GUARD_LOCKS");
+
+        g_guard_locks = (value && *value && *value != '0') ? 1 : 0;
+        if (g_guard_locks)
+            nfsu2_shim_trace("d3d9 bridge: guarded locks are ON - the game writes into "
+                             "our memory, with an unmapped page after it");
+    }
+    return g_guard_locks;
+}
+
+/*
+ * The region is placed so that its *end* is page-aligned and the next page is
+ * unmapped: an overrun of even one byte lands in the hole. Under-running is not what
+ * is being looked for here.
+ */
+static void guard_lock_post(struct nfsu2_d3d9_bridge *self, unsigned int getdesc_slot,
+                            unsigned int offset, unsigned int requested,
+                            unsigned int out, unsigned int result)
+{
+    unsigned int desc[8];
+    void **bits = (void **)(uintptr_t)out;
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    size_t size;
+    size_t body;
+    unsigned char *mapping;
+    int slot;
+
+    if (!guard_locks_enabled() || (result & 0x80000000u) || !bits || !*bits)
+        return;
+
+    memset(desc, 0, sizeof(desc));
+    if (((unsigned (*)(void *, unsigned))self->real_vtbl[getdesc_slot])
+            (self->real, (unsigned)(uintptr_t)desc) & 0x80000000u)
+        return;
+
+    size = requested ? requested : (desc[4] > offset ? desc[4] - offset : 0);
+    if (!size)
+        return;
+
+    for (slot = 0; slot < MAX_GUARDED_LOCKS; slot++) {
+        if (!g_guarded[slot].mapping)
+            break;
+    }
+    if (slot == MAX_GUARDED_LOCKS)
+        return; /* too many at once: leave this one alone rather than lose track */
+
+    body = ((size + page - 1) / page) * page;
+    mapping = mmap(NULL, body + page, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (mapping == MAP_FAILED)
+        return;
+    if (mprotect(mapping + body, page, PROT_NONE) != 0) {
+        munmap(mapping, body + page);
+        return;
+    }
+
+    g_guarded[slot].owner = self;
+    g_guarded[slot].mapping = mapping;
+    g_guarded[slot].mapping_size = body + page;
+    g_guarded[slot].given = mapping + body - size; /* so the end abuts the dead page */
+    g_guarded[slot].real_bits = *bits;
+    g_guarded[slot].size = size;
+
+    /* What DXVK already has, so a partial write by the game does not lose the rest. */
+    memcpy(g_guarded[slot].given, *bits, size);
+    *bits = g_guarded[slot].given;
+}
+
+/* Copy back and release, before DXVK is told the lock is over. */
+static void guard_unlock_pre(struct nfsu2_d3d9_bridge *self)
+{
+    int slot;
+
+    if (!guard_locks_enabled())
+        return;
+    for (slot = 0; slot < MAX_GUARDED_LOCKS; slot++) {
+        struct guarded_lock *lock = &g_guarded[slot];
+
+        if (lock->mapping && lock->owner == self) {
+            memcpy(lock->real_bits, lock->given, lock->size);
+            munmap(lock->mapping, lock->mapping_size);
+            memset(lock, 0, sizeof(*lock));
+            return;
+        }
     }
 }
 

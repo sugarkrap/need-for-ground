@@ -117,16 +117,23 @@ const thunk = (iface: string, method: Method, slot: number, known: Set<string>,
    * The GetDesc slot is passed as a literal because this generator knows it and the
    * runtime would otherwise have to search for it by name.
    */
-  if (/^IDirect3D(Vertex|Index)Buffer9$/.test(iface) && method.name === "Lock") {
-    const getDesc = descSlot;
-    if (getDesc >= 0)
-      lines.push(`    audit_buffer_lock(self, ${getDesc}, a1, a2);`);
-  }
+  const isBuffer = /^IDirect3D(Vertex|Index)Buffer9$/.test(iface);
+  if (isBuffer && method.name === "Lock" && descSlot >= 0)
+    lines.push(`    audit_buffer_lock(self, ${descSlot}, a1, a2);`);
+  /* Unlock must copy a guarded lock back *before* DXVK is told it is over. */
+  if (isBuffer && method.name === "Unlock")
+    lines.push("    guard_unlock_pre(self);");
 
   lines.push(
     `    result = ((${targetType(method.slots, returns)})self->real_vtbl[${slot}])` +
       `(self->real${callArguments(method.slots)});`,
   );
+
+  /* A guarded lock swaps in our own memory once DXVK has answered. */
+  if (isBuffer && method.name === "Lock" && descSlot >= 0) {
+    lines.push("");
+    lines.push(`    guard_lock_post(self, ${descSlot}, a1, a2, a3, result);`);
+  }
 
   /* Outbound interface pointers: wrap before the game can call through them. */
   const outbound = method.params.filter(
