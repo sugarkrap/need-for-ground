@@ -6,13 +6,13 @@ picking the work back up.
 
 ## The one-line state
 
-**The game boots.** `speed2.exe` runs as native i386 Linux code: its CRT starts, it
+**The game runs.** `speed2.exe` runs as native i386 Linux code: its CRT starts, it
 reads its registry, passes its disc check, loads its shaders out of its own PE
-resources, brings up a fullscreen 2560x1080 DXVK swapchain, creates 519 D3D9 objects
-(shaders, textures, vertex and index buffers, state blocks), prints its own log line -
-and then dies of heap corruption that has not been found yet.
+resources, brings up a fullscreen DXVK swapchain, loads its data files and its
+tracks, plays its intro, reaches its menus, and takes keyboard input.
 
-No window with gameplay in it. Everything up to the point of drawing works.
+It is playable enough to find gameplay bugs in, which is where the open problems now
+are - not in getting it to start.
 
 ## Run it
 
@@ -23,15 +23,12 @@ ninja -C build32
 meson test -C build32                 # 8 suites, must be green with zero diagnostics
 
 # the game itself
-NFSU2_SHIM_TRACE=1 NFSU2_DRIVE_J=cdrom:<dir with BIN.DAT> \
+NFSU2_DRIVE_J=cdrom:<dir with BIN.DAT> \
   ./build32/nfsu2-game-launch --no-fork --exe "<path>/speed2.exe"
 ```
 
-Three things that are not optional:
+Two things that are not optional:
 
-- **`NFSU2_SHIM_TRACE=1`.** Without it the interesting traces are silent, and a run
-  looks like it got nowhere when it got all the way. This cost real confusion; see
-  the correction in `native/README.md`.
 - **`NFSU2_DRIVE_J=cdrom:<dir>`** where the directory holds `BIN.DAT` from disc 2.
   The disc check is `GetDriveTypeA("J:\") == DRIVE_CDROM` plus
   `CreateFileA("J:\bin.dat")`; `J:` comes from the game's own registry. `BIN.DAT` is
@@ -41,57 +38,78 @@ Three things that are not optional:
   registration code, its video settings, the `CD Drive` value. That file stays in the
   game directory and must never be committed.
 
-`--no-fork` runs the game in-process; without it the parent survives to report how the
-child died, which is usually what you want when it crashes early.
+`NFSU2_SHIM_TRACE=1` logs every interesting Win32 call and is how nearly every bug
+here has been found. `--no-fork` runs the game in-process; without it the parent
+survives to report how the child died.
 
-## The open problem
+Diagnostics that are off by default: `NFSU2_D3D9_GUARD_LOCKS=1` (a locked vertex or
+index buffer gets our memory with an unmapped page after it, so an overrun faults at
+the instruction), `NFSU2_D3D9_TRACE_STATE_BLOCKS=1` (every Begin/EndStateBlock).
 
-Heap corruption. glibc reports `malloc(): invalid size` / `unsorted double linked list
-corrupted` from a worker thread, and the faulting address moves between runs while the
-*progress* does not (519 objects wrapped, 23 resources found, every run).
+## Open problems
 
-Four things are eliminated **by instrumentation, not argument**. All four checks are
-permanent, and all four stay silent:
+1. **The rev gauge does not work** in a race. Not diagnosed. Note that the
+   `BeginStateBlock` failures in a trace are *not* the cause - see below - and that a
+   trace of a run that reaches a race is the missing evidence, since the in-race HUD
+   and its textures are never loaded by a run that only reaches the menus.
+2. **Audio is not implemented.** `DirectSoundCreate` answers `DSERR_NODRIVER`, which
+   is the honest answer for a machine with no sound card and a path the game handles.
+   `src/dsound/dsound.c` is where the real thing goes.
+3. **Two of the 53 mapped actions do not bind**: the semantics for "Debug Camera
+   Turbo" and "Debug Camera Super Turbo" name DIK codes `0xea` and `0xe5`, which are
+   not in `dik_map.c`. Debug controls, reported as unmapped rather than mis-bound.
+4. **Saving needs confirming.** "Unable to save NAME." was the host-path round trip
+   (fixed in `2a4a36c`); that it now works has not been verified by anyone.
 
-| ruled out | by | where |
-| --- | --- | --- |
-| a small write past a block we allocated | canary in the slack between the requested size and `malloc_usable_size` | `src/win32/heap.c` |
-| a lock request larger than its buffer | `GetDesc` audit in front of every buffer `Lock` | `src/d3d9_bridge/bridge.c` |
-| a write past a locked buffer *region* | `NFSU2_D3D9_GUARD_LOCKS=1` - the game gets our memory with an unmapped page after it, copied back at `Unlock` | `src/d3d9_bridge/bridge.c` |
-| `GetDeviceState` overflowing the caller's buffer | read: keyboard, mouse and joystick all clamp to the caller's size | `src/dinput8/device.c` |
+## What was solved, and what it taught
 
-The third is worth knowing about as a *tool*: with `NFSU2_D3D9_GUARD_LOCKS=1`, a write
-one byte past a locked buffer faults at the instruction that makes it, instead of
-surfacing as a corrupted arena in an unrelated thread later. It found nothing on
-vertex and index buffers; it has not been extended to `LockRect`.
+The blocker in the previous handoff - heap corruption from a worker thread, four
+classes of cause eliminated by instrumentation and none of them it - was one bug, and
+it was not in the heap at all.
 
-What is left, in the order worth trying:
+`GetCurrentDirectoryA` returned a host path (and, because `game_launch` never called
+`nfsu2_win32_init`, latterly just `"."`). The game's file layer is a virtual
+filesystem with one device per drive letter from `GetLogicalDrives`, and it picks the
+device from the prefix up to the `:` of its search path - which is whatever
+`GetCurrentDirectoryA` returns. A path naming no device fell back to the abstract
+base device, whose open method is literally `or eax,-1; ret 0xc`. So **no Win32 file
+call was ever made**, and a trace showed no file I/O, and it read as a game that had
+not asked for its data.
 
-1. **`LockRect` and pitch.** A game that computes its own row stride instead of using
-   the returned pitch writes past the last row. The guard-lock machinery above is the
-   thing to extend - `LockRect` needs `pitch * height` from the surface descriptor
-   rather than a buffer size, and then it is the same trick.
-2. **Something other than a heap overrun**: a write into memory that has already been
-   freed, or a double free. Neither a canary nor a guard page sees those. glibc's
-   `MALLOC_PERTURB_` is the cheap probe.
-3. **Our own shim writing past some *other* game-supplied struct.** `GetDeviceState`
-   was the best candidate and is clean, but every `Get*` that fills a caller's buffer
-   deserves the same read. Note that `abi-layout-match` compares Wine against *DXVK* -
-   never against the 2004 SDK the game was built with, which is where a size
-   difference would come from.
+It had. The game requests its memory files asynchronously into a buffer its allocator
+fills with `0xee`, and the completion handler at `0x5793c0` relocates the header's
+record array *without checking the failure flag it is handed*. With the buffer still
+poison the record count read as `0x44443333`, and the handler wrote a pointer every
+20 bytes across the heap until it ran off the end - corrupting glibc's arena on the
+way and then faulting.
 
-Also open, and possibly related: `IDirect3DDevice9::BeginStateBlock` fails repeatedly
-with `D3DERR_INVALIDCALL`, which is what DXVK returns when a state block is already
-recording.
+Four lessons worth keeping:
+
+- **Trace successes, not just failures.** Every one of `CreateFileA`, `ReadFile`,
+  `dinput` device creation and `dinput` reads traced only its error paths, so "the
+  game never asked" and "the shim never said" were indistinguishable. Three separate
+  bugs hid in that gap. They all trace successes now.
+- **A comment asserting what other software does is a claim that can be wrong.**
+  "Games that use action mapping fall back to explicit binding" - this one does not,
+  and that sentence cost the keyboard.
+- **Measure before concluding, then check the arithmetic.** I called the
+  `BeginStateBlock` failures the likely cause of the gauge on the strength of every
+  refusal reporting "1 recording already open". The Begin/End counts - 326 and 326 -
+  say the recordings are balanced and the nesting is the game's own, ignored, and
+  refused identically by Windows.
+- **An overflow warning is a cause, not bookkeeping.** "d3d9 bridge table is full"
+  appeared 5435 times and was the reason DXVK was being handed our own bridge
+  pointers to call as its objects.
 
 ## What was built, and the load-bearing bits
 
-- **Win32 shim** over POSIX/SDL2 - 251 of 251 imports resolve. Audio answers
-  `DSERR_NODRIVER` honestly; everything else is implemented.
+- **Win32 shim** over POSIX/SDL2 - 251 of 251 imports resolve.
 - **PE loader** (`src/loader/pe_loader.c`) maps the exe at its own base, headers
   included (an `HMODULE` *is* the image base, and the CRT startup reads `MZ` through
   it), resolves the IAT, and points unresolved imports at stubs that name themselves
-  when called.
+  when called. It maps each section's full `SizeOfRawData`, not `VirtualSize`: this
+  exe has a steering-wheel wrapper baked into it whose code lives in `.text`'s
+  padding, and truncating there left a detour jumping into zeros.
 - **A TEB in `%fs`** (`src/win32/teb.c`), because `fs:[0]` is the SEH chain and every
   `__try` touches it. i386 only, and cheap *because* i386 glibc keeps its thread
   pointer in `%gs`.
@@ -101,11 +119,18 @@ recording.
   `tools/generate_d3d9_bridge.ts`): 274 `__stdcall` + `force_align_arg_pointer` thunks
   in front of DXVK Native's `__cdecl` vtables, with COM pointers translated both ways.
   Both halves are mandatory - MSVC does not keep the stack 16-byte aligned and DXVK
-  is full of `movaps`.
+  is full of `movaps`. It also does what D3D9 does to the FPU at `CreateDevice`
+  (single precision, round to nearest, all exceptions masked), without which the
+  game's unmasked control word reaches DXVK's worker threads and the NVIDIA driver
+  takes a SIGFPE.
+- **DirectInput action mapping** (`src/dinput8/`), which is the only way this game
+  reads its keyboard: it never creates a keyboard device. All 53 of its actions are
+  `DIKEYBOARD_*` semantics, so the low byte is a DIK code and no genre default-mapping
+  tables are needed.
 - **Ported game functions** (`native/game/manifest.yaml` plus
   `tools/import_decompiled.ts`): 10 functions, each verified twice - against a
-  reference and against the original machine code with identical inputs, 283
-  comparisons. The decompiled code and the generated ports are never committed.
+  reference and against the original machine code with identical inputs. The
+  decompiled code and the generated ports are never committed.
 
 ## Traps, all of which cost time here
 
@@ -123,15 +148,19 @@ recording.
 - **Keep the Ghidra project somewhere durable.** The first one lived in `/tmp` and did
   not survive a reboot. It is at `~/ghidra-projects/NFSU2` now, with `pyghidra` in a
   venv beside it.
+- **We hand the game paths in one alphabet and must accept them back in another.**
+  Two bugs were this: the VFS search path, and `SHGetFolderPathA` returning a host
+  path the game then appends `\NFS Underground 2\` to. `path.c` now splits on the
+  separator - a leading `/` is a host path of ours, a leading `\` is Windows for
+  "root of the current drive" and means the game root - and both are tested.
 
 ## Next steps, in the order I would take them
 
-1. Find the corruption. Extending the guard-lock machinery to `LockRect` (item 1 in
-   the list above) is both the cheapest test and the one that reuses what is already
-   built; `MALLOC_PERTURB_` for the use-after-free case (item 2) costs nothing at all
-   and can be run first.
-2. Fix `BeginStateBlock`, which may fall out of the same cause.
-3. Re-export the renderer scope from Ghidra now that the vtable method definitions
+1. The rev gauge. Get a trace from a run that reaches a race (`NFSU2_SHIM_TRACE=1`,
+   drive one), and check first whether the in-race HUD's own files
+   (`GLOBAL/HUD_CustomTextures_*.bin`) are opened and what D3D9 calls fail.
+2. Confirm saving works, now that the save directory resolves.
+3. Audio, which is the largest remaining gap and the most visible one.
+4. Re-export the renderer scope from Ghidra now that the vtable method definitions
    carry argument counts, then widen the manifest into `DIRECTX_SCOPE.md`'s 99
    functions - one at a time, differential test each.
-4. Real audio, when something needs it. `src/dsound/dsound.c` is where it goes.
