@@ -1278,6 +1278,8 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_BeginStateBlock(struct nfsu2
 
     result = ((unsigned (*)(void *))self->real_vtbl[60])(self->real);
 
+    state_block_begin(result);
+
     if (result & 0x80000000u)
         nfsu2_shim_trace("d3d9 FAILED 0x%08x  IDirect3DDevice9::BeginStateBlock", result);
     return result;
@@ -1288,6 +1290,8 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3DDevice9_EndStateBlock(struct nfsu2_d
     unsigned result;
 
     result = ((unsigned (*)(void *, unsigned))self->real_vtbl[61])(self->real, a1);
+
+    state_block_end(result);
 
     if (result == 0 && a1) { /* IDirect3DStateBlock9 ** */
         void **out = (void **)(uintptr_t)a1;

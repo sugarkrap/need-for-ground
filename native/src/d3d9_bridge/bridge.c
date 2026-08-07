@@ -284,6 +284,90 @@ static unsigned NFSU2_D3D9_THUNK nfsu2_d3d9_QueryInterface(struct nfsu2_d3d9_bri
 static unsigned NFSU2_D3D9_THUNK nfsu2_d3d9_AddRef(struct nfsu2_d3d9_bridge *self);
 static unsigned NFSU2_D3D9_THUNK nfsu2_d3d9_Release(struct nfsu2_d3d9_bridge *self);
 
+/* --- state block recording depth ------------------------------------------ */
+
+/*
+ * BeginStateBlock fails with D3DERR_INVALIDCALL for exactly one reason: a state
+ * block is already being recorded. This game gets that answer 41 times a run, which
+ * looked alarming enough to be worth settling, because the two readings of it are
+ * very different. If a recorder were left open, every state-setting call after it
+ * would be captured into the block instead of reaching the device, and whatever was
+ * being drawn would be wrong from then on.
+ *
+ * Measured, and it is the harmless reading. Over a run to the main menu the counts
+ * are 326 begun and 326 ended, and the pattern around each refusal is
+ *
+ *     BeginStateBlock  ok      depth 1
+ *     BeginStateBlock  refused
+ *     BeginStateBlock  refused
+ *     EndStateBlock    ok      depth 0
+ *
+ * so the game asks twice, ignores the answer it cannot have, and closes the block it
+ * did open. Windows refuses the same call the same way. The FAILED lines in a trace
+ * are noise, not a lead - which is worth writing down, since they read as a lead.
+ *
+ * The counters stay because they are what proves it, and because an unbalanced depth
+ * would be a real and otherwise invisible bug. NFSU2_D3D9_TRACE_STATE_BLOCKS=1 shows
+ * every Begin and End if the balance ever needs re-checking.
+ */
+static int g_state_block_depth;
+static int g_state_block_nested;
+static int g_state_block_unbalanced;
+static unsigned int g_state_block_begins;
+static unsigned int g_state_block_ends;
+static int g_trace_state_blocks = -1;
+
+/* Every Begin and End, for finding where the two stop pairing. Off by default:
+ * there are hundreds of them and only the divergence is interesting. */
+static int trace_state_blocks(void)
+{
+    if (g_trace_state_blocks < 0) {
+        const char *value = getenv("NFSU2_D3D9_TRACE_STATE_BLOCKS");
+
+        g_trace_state_blocks = (value && *value && *value != '0') ? 1 : 0;
+    }
+    return g_trace_state_blocks;
+}
+
+static void state_block_begin(unsigned int result)
+{
+    if (result & 0x80000000u) {
+        g_state_block_nested++;
+        nfsu2_shim_trace("d3d9: BeginStateBlock refused - %d recording(s) already open "
+                         "(%d refused so far, %u begun / %u ended)",
+                         g_state_block_depth, g_state_block_nested,
+                         g_state_block_begins, g_state_block_ends);
+        return;
+    }
+    g_state_block_depth++;
+    g_state_block_begins++;
+    if (trace_state_blocks())
+        nfsu2_shim_trace("d3d9: BeginStateBlock #%u ok, depth now %d",
+                         g_state_block_begins, g_state_block_depth);
+}
+
+static void state_block_end(unsigned int result)
+{
+    if (result & 0x80000000u)
+        return;
+    g_state_block_ends++;
+    if (trace_state_blocks())
+        nfsu2_shim_trace("d3d9: EndStateBlock #%u ok, depth was %d",
+                         g_state_block_ends, g_state_block_depth);
+    if (g_state_block_depth > 0) {
+        g_state_block_depth--;
+        return;
+    }
+    /* An End with nothing open. Counted rather than ignored: it would mean the
+     * depth this file thinks it is tracking has drifted from DXVK's. */
+    g_state_block_unbalanced++;
+}
+
+unsigned int nfsu2_d3d9_state_block_depth(void)
+{
+    return (unsigned int)(g_state_block_depth < 0 ? 0 : g_state_block_depth);
+}
+
 /* --- the FPU, which Direct3D9 owns and DXVK Native does not touch ---------- */
 
 /*

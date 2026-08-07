@@ -146,6 +146,15 @@ const thunk = (iface: string, method: Method, slot: number, known: Set<string>,
       `(self->real${callArguments(method.slots)});`,
   );
 
+  /*
+   * State block recording depth, tracked so that a recorder left open is
+   * distinguishable from a nested Begin the game ignores. See bridge.c.
+   */
+  if (iface === "IDirect3DDevice9" && /^(Begin|End)StateBlock$/.test(method.name)) {
+    lines.push("");
+    lines.push(`    state_block_${method.name === "BeginStateBlock" ? "begin" : "end"}(result);`);
+  }
+
   /* A guarded lock swaps in our own memory once DXVK has answered. */
   if (isBuffer && method.name === "Lock" && descSlot >= 0) {
     lines.push("");
