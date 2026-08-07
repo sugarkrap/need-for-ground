@@ -148,6 +148,7 @@ static unsigned NFSU2_D3D9_THUNK t_IDirect3D9_CreateDevice(struct nfsu2_d3d9_bri
 {
     unsigned result;
 
+    fpu_setup(a4); /* DWORD BehaviorFlags */
     result = ((unsigned (*)(void *, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned))self->real_vtbl[16])(self->real, a1, a2, a3, a4, a5, a6);
 
     if (result == 0 && a6) { /* IDirect3DDevice9 ** */

@@ -61,4 +61,8 @@ void *nfsu2_d3d9_unwrap(void *maybe_bridge);
 /* How many bridges exist, and how many calls have crossed. Diagnostics. */
 unsigned int nfsu2_d3d9_bridge_count(void);
 
+/* How many times a released interface was used again. Non-zero means a refcount
+ * disagreement between the game and DXVK, and the trace names the interface. */
+unsigned int nfsu2_d3d9_use_after_release(void);
+
 #endif /* NFSU2_D3D9_BRIDGE_H */

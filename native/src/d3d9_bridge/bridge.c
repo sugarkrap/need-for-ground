@@ -34,7 +34,12 @@ struct nfsu2_d3d9_bridge {
     void *real;                       /* the DXVK object */
     const void *const *real_vtbl;     /* its cdecl vtable */
     enum nfsu2_d3d9_iface iface;
+    unsigned int retired;             /* the wrapped object is gone; see the quarantine */
 };
+
+/* Defined below the generated file, which supplies the name table. Declared here
+ * because the diagnostics throughout this file name the interface they are about. */
+static const char *iface_name(enum nfsu2_d3d9_iface iface);
 
 /* --- the identity map ----------------------------------------------------- */
 
@@ -43,31 +48,46 @@ struct nfsu2_d3d9_bridge {
  * the same surface, and a game that caches interface pointers compares them. Two
  * bridges for one object would also mean two independent refcount views of it.
  *
- * Open-addressed, locked, and generous - a frame's worth of D3D9 objects is
- * hundreds, not thousands.
+ * Open-addressed, locked, and **grown on demand**. It used to be a fixed 2048
+ * entries, on the reasoning that a frame's worth of D3D9 objects is hundreds rather
+ * than thousands. Loading a track disproves that: one run wraps 8354 objects and
+ * overflowed the table 5435 times.
+ *
+ * Overflowing was not a degraded mode, it was a wild jump. An untracked bridge is
+ * invisible to bridge_find_locked, so nfsu2_d3d9_unwrap cannot tell it from a plain
+ * data pointer and hands *the bridge* to DXVK, which reads its first word as a
+ * vtable - our stdcall table - and calls a slot of it as one of its own methods.
+ * The result was a jump to whatever that slot held. Growing is the fix; the trace
+ * that said "table is full" was the only warning, and it was easy to read as
+ * bookkeeping rather than as the cause.
  */
-#define BRIDGE_SLOTS 2048
+#define BRIDGE_INITIAL_SLOTS 4096
 
-static struct nfsu2_d3d9_bridge *g_bridges[BRIDGE_SLOTS];
+static struct nfsu2_d3d9_bridge **g_bridges;
+static size_t g_bridge_slots;
 static unsigned int g_bridge_count;
 static unsigned int g_bridge_calls;
+static unsigned int g_bridge_untracked;
 static pthread_mutex_t g_bridge_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static size_t bridge_slot(const void *real)
+static size_t bridge_slot(const void *real, size_t slots)
 {
     uintptr_t value = (uintptr_t)real >> 4;
 
     value *= 2654435761u;
-    return (size_t)(value & (BRIDGE_SLOTS - 1));
+    return (size_t)value & (slots - 1);
 }
 
 static struct nfsu2_d3d9_bridge *bridge_find_locked(const void *real)
 {
-    size_t start = bridge_slot(real);
+    size_t start;
     size_t probe;
 
-    for (probe = 0; probe < BRIDGE_SLOTS; probe++) {
-        size_t index = (start + probe) & (BRIDGE_SLOTS - 1);
+    if (!g_bridges)
+        return NULL;
+    start = bridge_slot(real, g_bridge_slots);
+    for (probe = 0; probe < g_bridge_slots; probe++) {
+        size_t index = (start + probe) & (g_bridge_slots - 1);
 
         if (!g_bridges[index])
             return NULL;
@@ -77,32 +97,90 @@ static struct nfsu2_d3d9_bridge *bridge_find_locked(const void *real)
     return NULL;
 }
 
-static void bridge_insert_locked(struct nfsu2_d3d9_bridge *bridge)
+/*
+ * Put a bridge in the table as it stands. Never grows, so it is safe to call while
+ * walking the table - which bridge_forget does when it closes a probe cluster.
+ */
+static int bridge_place_locked(struct nfsu2_d3d9_bridge *bridge)
 {
-    size_t start = bridge_slot(bridge->real);
+    size_t start;
     size_t probe;
 
-    for (probe = 0; probe < BRIDGE_SLOTS; probe++) {
-        size_t index = (start + probe) & (BRIDGE_SLOTS - 1);
+    if (!g_bridges)
+        return -1;
+    start = bridge_slot(bridge->real, g_bridge_slots);
+    for (probe = 0; probe < g_bridge_slots; probe++) {
+        size_t index = (start + probe) & (g_bridge_slots - 1);
 
         if (!g_bridges[index]) {
             g_bridges[index] = bridge;
             g_bridge_count++;
-            return;
+            return 0;
         }
     }
-    nfsu2_shim_trace("d3d9 bridge table is full (%d) - not tracking %p",
-                     BRIDGE_SLOTS, bridge->real);
+    return -1;
+}
+
+/* Double the table and re-place everything. Returns 0 if the table got bigger. */
+static int bridge_grow_locked(void)
+{
+    struct nfsu2_d3d9_bridge **old = g_bridges;
+    size_t old_slots = g_bridge_slots;
+    size_t i;
+
+    g_bridge_slots = old_slots ? old_slots * 2 : BRIDGE_INITIAL_SLOTS;
+    g_bridges = calloc(g_bridge_slots, sizeof(*g_bridges));
+    if (!g_bridges) {
+        /* Keep what we had rather than lose every mapping at once. */
+        g_bridges = old;
+        g_bridge_slots = old_slots;
+        return -1;
+    }
+    g_bridge_count = 0;
+    for (i = 0; i < old_slots; i++) {
+        if (old[i])
+            bridge_place_locked(old[i]);
+    }
+    free(old);
+    return 0;
+}
+
+static void bridge_insert_locked(struct nfsu2_d3d9_bridge *bridge)
+{
+    /* Grown at three-quarters full, because linear probing degrades before it
+     * fills, and again if a place somehow still fails. */
+    if (!g_bridges || (g_bridge_count + 1) * 4 > g_bridge_slots * 3)
+        bridge_grow_locked();
+    if (bridge_place_locked(bridge) == 0)
+        return;
+    if (bridge_grow_locked() == 0 && bridge_place_locked(bridge) == 0)
+        return;
+
+    /*
+     * Out of memory for the table. The bridge is still returned to the game, since
+     * calls through it work; what is lost is the ability to recognise it later, so
+     * this is loud and counted rather than a one-line note.
+     */
+    g_bridge_untracked++;
+    nfsu2_shim_trace("d3d9 bridge: CANNOT TRACK %s %p - out of memory for the "
+                     "identity map (%u untracked). Unwrapping will not recognise "
+                     "it and DXVK may be handed the bridge itself.",
+                     iface_name(bridge->iface), bridge->real, g_bridge_untracked);
 }
 
 static void bridge_forget(struct nfsu2_d3d9_bridge *bridge)
 {
-    size_t start = bridge_slot(bridge->real);
+    size_t start;
     size_t probe;
 
     pthread_mutex_lock(&g_bridge_lock);
-    for (probe = 0; probe < BRIDGE_SLOTS; probe++) {
-        size_t index = (start + probe) & (BRIDGE_SLOTS - 1);
+    if (!g_bridges) {
+        pthread_mutex_unlock(&g_bridge_lock);
+        return;
+    }
+    start = bridge_slot(bridge->real, g_bridge_slots);
+    for (probe = 0; probe < g_bridge_slots; probe++) {
+        size_t index = (start + probe) & (g_bridge_slots - 1);
 
         if (!g_bridges[index])
             break;
@@ -110,21 +188,80 @@ static void bridge_forget(struct nfsu2_d3d9_bridge *bridge)
             g_bridges[index] = NULL;
             g_bridge_count--;
             /* Re-place the rest of the cluster, since linear probing cannot see
-             * past a hole. */
-            for (probe = probe + 1; probe < BRIDGE_SLOTS; probe++) {
-                size_t next = (start + probe) & (BRIDGE_SLOTS - 1);
+             * past a hole. bridge_place_locked, not bridge_insert_locked: growing
+             * here would rehash the table this loop is walking. There is room, a
+             * slot having just been freed. */
+            for (probe = probe + 1; probe < g_bridge_slots; probe++) {
+                size_t next = (start + probe) & (g_bridge_slots - 1);
                 struct nfsu2_d3d9_bridge *moved = g_bridges[next];
 
                 if (!moved)
                     break;
                 g_bridges[next] = NULL;
                 g_bridge_count--;
-                bridge_insert_locked(moved);
+                bridge_place_locked(moved);
             }
             break;
         }
     }
     pthread_mutex_unlock(&g_bridge_lock);
+}
+
+/* --- the quarantine: a double release should be a report, not a wild jump --- */
+
+/*
+ * When a bridge's object reaches refcount zero the bridge has to stop existing -
+ * but freeing it immediately means a release that arrives afterwards reads a
+ * recycled 16-byte chunk, and glibc has by then written its own tcache bookkeeping
+ * into the very field that holds the vtable pointer. The call goes to whatever that
+ * word happens to be. That is how this presented: an unmapped-address jump out of
+ * nfsu2_d3d9_Release, with nothing to say which interface it had been.
+ *
+ * So retirement is deferred. A retired bridge is marked, kept, and only freed once
+ * this many further retirements have happened - long enough for a stray release to
+ * land on a bridge that can still describe itself, and bounded, so it is not a leak.
+ * The cost is 1024 * 20 bytes.
+ */
+#define BRIDGE_QUARANTINE 1024
+
+static struct nfsu2_d3d9_bridge *g_retired[BRIDGE_QUARANTINE];
+static unsigned int g_retired_next;
+static unsigned int g_use_after_release;
+
+static void bridge_retire(struct nfsu2_d3d9_bridge *bridge)
+{
+    struct nfsu2_d3d9_bridge *evicted;
+
+    pthread_mutex_lock(&g_bridge_lock);
+    bridge->retired = 1;
+    /* real and real_vtbl are deliberately left alone: they are what makes the
+     * report below able to name the interface and the object it wrapped. */
+    evicted = g_retired[g_retired_next];
+    g_retired[g_retired_next] = bridge;
+    g_retired_next = (g_retired_next + 1) % BRIDGE_QUARANTINE;
+    pthread_mutex_unlock(&g_bridge_lock);
+
+    free(evicted);
+}
+
+/*
+ * A call on a bridge whose object is gone. Reported once per occurrence with
+ * everything known about it, and answered as a released interface would be, so the
+ * caller carries on instead of dying four frames into someone else's library.
+ */
+static unsigned bridge_use_after_release(struct nfsu2_d3d9_bridge *self, const char *api)
+{
+    g_use_after_release++;
+    nfsu2_shim_trace("d3d9 bridge: USE AFTER RELEASE - %s on %s bridge %p, whose "
+                     "object %p was already destroyed (%u so far)",
+                     api, iface_name(self->iface), (void *)self, self->real,
+                     g_use_after_release);
+    return 0;
+}
+
+unsigned int nfsu2_d3d9_use_after_release(void)
+{
+    return g_use_after_release;
 }
 
 static int is_bridge(const void *pointer)
@@ -147,8 +284,64 @@ static unsigned NFSU2_D3D9_THUNK nfsu2_d3d9_QueryInterface(struct nfsu2_d3d9_bri
 static unsigned NFSU2_D3D9_THUNK nfsu2_d3d9_AddRef(struct nfsu2_d3d9_bridge *self);
 static unsigned NFSU2_D3D9_THUNK nfsu2_d3d9_Release(struct nfsu2_d3d9_bridge *self);
 
-/* The generated file defines this below; the auditor above it needs the name. */
-static const char *iface_name(enum nfsu2_d3d9_iface iface);
+/* --- the FPU, which Direct3D9 owns and DXVK Native does not touch ---------- */
+
+/*
+ * Direct3D9's CreateDevice, on Windows and on x86, reprograms the x87 unit:
+ * single precision, round to nearest, and every floating-point exception masked.
+ * It is documented, it is what D3DCREATE_FPU_PRESERVE exists to opt out of, and
+ * it is not optional behaviour a game has to ask for - it just happens.
+ *
+ * DXVK Native does not do it, and the omission is not harmless. This game leaves
+ * the control word at 0xe72 - 53-bit precision, round toward zero, with invalid
+ * operation, divide-by-zero and overflow *unmasked*. Every thread DXVK creates
+ * inherits that word, so the NVIDIA driver raised an invalid-operation trap on
+ * dxvk-submit and the process took a SIGFPE on a thread that has no TEB and no
+ * business handling Win32 exceptions. On Windows the same code cannot fault,
+ * because D3D9 masked those exceptions before the driver ever ran.
+ *
+ * Doing it at CreateDevice is what makes it reach DXVK's worker threads: they are
+ * created inside that call, and a new thread inherits the creating thread's x87
+ * state. MXCSR is set too - SSE exceptions were already masked here, but relying
+ * on that would be relying on an accident.
+ *
+ * Same shape as Wine's d3d_fpu_setup, and for the same reason.
+ */
+#define NFSU2_D3DCREATE_FPU_PRESERVE 0x00000002u
+
+static void fpu_setup(unsigned int behaviour)
+{
+    if (behaviour & NFSU2_D3DCREATE_FPU_PRESERVE) {
+        nfsu2_shim_trace("d3d9 bridge: D3DCREATE_FPU_PRESERVE - leaving the FPU as "
+                         "the game set it");
+        return;
+    }
+#if defined(__i386__) || defined(__x86_64__)
+    {
+        unsigned short control;
+        unsigned int mxcsr;
+
+        __asm__ __volatile__("fnstcw %0" : "=m"(control));
+        /*
+         * Clear bits 0-5 (the exception masks) and 8-11 (precision and rounding
+         * control), then set all six masks. That leaves PC = 00 (24-bit single)
+         * and RC = 00 (round to nearest), which is what D3D9 installs.
+         */
+        control = (unsigned short)((control & ~0x0f3fu) | 0x003fu);
+        __asm__ __volatile__("fldcw %0" : : "m"(control));
+
+        __asm__ __volatile__("stmxcsr %0" : "=m"(mxcsr));
+        mxcsr |= 0x1f80u; /* the six SSE exception masks */
+        __asm__ __volatile__("ldmxcsr %0" : : "m"(mxcsr));
+
+        nfsu2_shim_trace("d3d9 bridge: FPU set the way D3D9 does it - single "
+                         "precision, round to nearest, all exceptions masked "
+                         "(x87 control word 0x%04x)", control);
+    }
+#else
+    nfsu2_shim_trace("d3d9 bridge: no FPU setup on this architecture");
+#endif
+}
 
 /*
  * Is the game asking to lock more of a buffer than the buffer has?
@@ -322,23 +515,29 @@ static const char *iface_name(enum nfsu2_d3d9_iface iface)
 static unsigned NFSU2_D3D9_THUNK nfsu2_d3d9_AddRef(struct nfsu2_d3d9_bridge *self)
 {
     g_bridge_calls++;
+    if (self->retired)
+        return bridge_use_after_release(self, "AddRef");
     return ((unsigned (*)(void *))self->real_vtbl[1])(self->real);
 }
 
 /*
  * The bridge lives exactly as long as the object it wraps. Freeing it earlier would
  * hand the game a dangling vtable; freeing it later would leak one per object per
- * frame in a game that creates and destroys surfaces constantly.
+ * frame in a game that creates and destroys surfaces constantly. Retirement goes
+ * through the quarantine so that a release arriving after the last one is a report
+ * rather than a jump into a recycled heap chunk.
  */
 static unsigned NFSU2_D3D9_THUNK nfsu2_d3d9_Release(struct nfsu2_d3d9_bridge *self)
 {
     unsigned remaining;
 
     g_bridge_calls++;
+    if (self->retired)
+        return bridge_use_after_release(self, "Release");
     remaining = ((unsigned (*)(void *))self->real_vtbl[2])(self->real);
     if (remaining == 0) {
         bridge_forget(self);
-        free(self);
+        bridge_retire(self);
     }
     return remaining;
 }
@@ -356,6 +555,13 @@ static unsigned NFSU2_D3D9_THUNK nfsu2_d3d9_QueryInterface(struct nfsu2_d3d9_bri
     void **slot = (void **)(uintptr_t)out;
 
     g_bridge_calls++;
+    if (self->retired) {
+        if (slot)
+            *slot = NULL;
+        /* E_NOINTERFACE, which is the truth about an object that no longer exists. */
+        bridge_use_after_release(self, "QueryInterface");
+        return 0x80004002u;
+    }
     result = ((unsigned (*)(void *, unsigned, unsigned))self->real_vtbl[0])
         (self->real, iid, out);
     if (result == 0 && slot && *slot) {

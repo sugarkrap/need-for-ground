@@ -124,6 +124,23 @@ const thunk = (iface: string, method: Method, slot: number, known: Set<string>,
   if (isBuffer && method.name === "Unlock")
     lines.push("    guard_unlock_pre(self);");
 
+  /*
+   * CreateDevice reprograms the FPU on Windows, and it has to happen before the
+   * call because DXVK's worker threads are created inside it and inherit the x87
+   * state of whoever created them. See fpu_setup in d3d9_bridge.c.
+   *
+   * The flags parameter is found by name rather than assumed to be the fourth,
+   * so a header that spells it differently is a build error rather than a wrong
+   * register: CreateDevice, CreateDeviceEx and the Ex interface all name it
+   * BehaviorFlags or flags.
+   */
+  if (/^IDirect3D9(Ex)?$/.test(iface) && /^CreateDevice(Ex)?$/.test(method.name)) {
+    const flags = method.params.find((p) => /\b(BehaviorFlags|flags)\b/.test(p.text));
+    if (!flags)
+      throw new Error(`${iface}::${method.name} has no behaviour-flags parameter`);
+    lines.push(`    fpu_setup(a${flags.slot}); /* ${flags.text} */`);
+  }
+
   lines.push(
     `    result = ((${targetType(method.slots, returns)})self->real_vtbl[${slot}])` +
       `(self->real${callArguments(method.slots)});`,
