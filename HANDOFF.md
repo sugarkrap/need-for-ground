@@ -9,10 +9,10 @@ picking the work back up.
 **The game runs.** `speed2.exe` runs as native i386 Linux code: its CRT starts, it
 reads its registry, passes its disc check, loads its shaders out of its own PE
 resources, brings up a fullscreen DXVK swapchain, loads its data files and its
-tracks, plays its intro, reaches its menus, and takes keyboard input.
+tracks, plays its intro, reaches its menus, takes keyboard input, and plays audio.
 
-It is playable enough to find gameplay bugs in, which is where the open problems now
-are - not in getting it to start.
+It has sound. It is playable enough to find gameplay bugs in, which is where the open
+problems now are - not in getting it to start.
 
 ## Run it
 
@@ -53,15 +53,12 @@ the instruction), `NFSU2_D3D9_TRACE_STATE_BLOCKS=1` (every Begin/EndStateBlock),
    `BeginStateBlock` failures in a trace are *not* the cause - see below - and that a
    trace of a run that reaches a race is the missing evidence, since the in-race HUD
    and its textures are never loaded by a run that only reaches the menus.
-2. **Audio is implemented but the game plays none of it.** DirectSound is real now
-   (`src/dsound/`), and everything the game asks of it works: it probes the speaker
-   formats, settles on stereo, creates one 88192-byte streaming buffer, clears it and
-   starts it looping. Then it never writes into it and *never polls
-   GetCurrentPosition*, so it is not in a streaming loop at all - the cause is above
-   DirectSound, in the engine deciding it has nothing to play. It opens
-   `sdata/sdat.viv` and keeps it open, creates two events and a thread for streaming,
-   and opens nothing from `SOUND/`. `NFSU2_DSOUND_TRACE_LEVEL=1` reports the peak
-   output level, which is how "playing" and "audible" were told apart.
+2. **Audio quality has not been assessed.** It works - `src/dsound/` mixes the game's
+   stream and `NFSU2_DSOUND_TRACE_LEVEL=1` shows a sustained peak around 6500-8300 of
+   32767 - but nobody has judged how it *sounds*. The known-crude part is
+   nearest-neighbour resampling in `mixer.c`, which is worst on a pitch-shifted engine
+   loop; linear interpolation is a self-contained change to `sample_frame`. The 3D
+   interfaces are refused, so positional audio is flat.
 3. **Two of the 53 mapped actions do not bind**: the semantics for "Debug Camera
    Turbo" and "Debug Camera Super Turbo" name DIK codes `0xea` and `0xe5`, which are
    not in `dik_map.c`. Debug controls, reported as unmapped rather than mis-bound.
@@ -142,6 +139,9 @@ Four lessons worth keeping:
 - **Multimedia timers** (`src/winmm/mmtimer.c`), one service thread with a TEB. This
   game's audio engine pumps itself from a 1 ms one-shot re-armed inside its own
   callback, which is why both of those details matter.
+- **Owned, recursive Win32 mutexes** (`src/win32/sync.c`). Not a detail: without the
+  owner and the count a mutex is an auto-reset event, and the owner's second
+  acquisition waits on itself forever.
 - **Ported game functions** (`native/game/manifest.yaml` plus
   `tools/import_decompiled.ts`): 10 functions, each verified twice - against a
   reference and against the original machine code with identical inputs. The
@@ -163,6 +163,13 @@ Four lessons worth keeping:
 - **Keep the Ghidra project somewhere durable.** The first one lived in `/tmp` and did
   not survive a reboot. It is at `~/ghidra-projects/NFSU2` now, with `pyghidra` in a
   venv beside it.
+- **A new subsystem working can expose a bug that has nothing to do with it.**
+  Implementing DirectSound froze the game solid, and the cause was Win32 mutex
+  semantics - audio was simply the first code to take a lock recursively. I spent a
+  while concluding things about the audio engine from a process that was deadlocked.
+  Check whether the process is *running* before reasoning about what it decided:
+  `/proc/<pid>/task/*/wchan` and its CPU time answer that without a debugger, which
+  matters here because `ptrace_scope` is 1 and gdb cannot attach after the fact.
 - **A callback into game code needs a TEB, wherever it is called from.** `__try`
   touches `fs:[0]`. `CreateThread` got this right from the start and the multimedia
   timers did not, and the symptom was silent audio with no fault anywhere.
@@ -181,10 +188,7 @@ Four lessons worth keeping:
    drive one), and check first whether the in-race HUD's own files
    (`GLOBAL/HUD_CustomTextures_*.bin`) are opened and what D3D9 calls fail.
 2. Confirm saving works, now that the save directory resolves.
-3. Audio: find why the engine never asks for a sound. It initialises fully and its
-   pump runs, so the question is what its higher level is waiting for - start from
-   the fact that it opens `sdata/sdat.viv`, holds it, and then opens nothing from
-   `SOUND/`.
+3. Listen to the audio and decide whether the resampler needs replacing.
 4. Re-export the renderer scope from Ghidra now that the vtable method definitions
    carry argument counts, then widen the manifest into `DIRECTX_SCOPE.md`'s 99
    functions - one at a time, differential test each.
