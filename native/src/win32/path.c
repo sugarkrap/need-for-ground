@@ -211,12 +211,13 @@ int nfsu2_path_to_host(const char *win_path, char *out, size_t out_size)
     size_t acc_len;
     char *cursor;
     int missing_tail = 0;
+    int absolute_host = 0;
 
     if (!win_path || !out || out_size == 0)
         return -EINVAL;
 
-    /* Already a host path? Pass absolute POSIX paths through untouched: that
-     * is what GetModuleFileNameA hands back, and the game round-trips it. */
+    /* Already a host path, and nothing appended to it? Pass it through untouched:
+     * that is what GetModuleFileNameA hands back, and the game round-trips it. */
     if (win_path[0] == '/' && !strchr(win_path, '\\')) {
         if (snprintf(out, out_size, "%s", win_path) >= (int)out_size)
             return -ENAMETOOLONG;
@@ -250,12 +251,33 @@ int nfsu2_path_to_host(const char *win_path, char *out, size_t out_size)
              (cursor[0] >= 'a' && cursor[0] <= 'z')) && cursor[1] == ':') {
             mapped = nfsu2_path_drive(cursor[0]);
             cursor += 2;
+        } else if (cursor[0] == '/') {
+            /*
+             * A leading forward slash means a host path, and it is one of ours: this
+             * shim hands out real paths from SHGetFolderPathA (the save directory)
+             * and GetModuleFileNameA, and the game appends to them with backslashes -
+             * "/home/you/Documents" + "\NFS Underground 2\..." - which is no longer
+             * the pure POSIX path the fast path above catches.
+             *
+             * Resolving it from / rather than from the game root is what makes that
+             * round trip. Before this, such a path was re-rooted under the install
+             * directory, so every save went looking for <game>/home/you/Documents
+             * and the game reported that it could not save.
+             *
+             * A leading *backslash* is the Windows idiom for "root of the current
+             * drive" and still means the game root, which is what the fall-through
+             * below does. Distinguishing the two by separator is the whole rule.
+             */
+            absolute_host = 1;
         }
         while (*cursor == '\\' || *cursor == '/')
             cursor++;
 
-        acc_len = (size_t)snprintf(acc, sizeof(acc), "%s",
-                                   mapped ? mapped : nfsu2_path_root());
+        if (absolute_host)
+            acc_len = (size_t)snprintf(acc, sizeof(acc), "%s", "");
+        else
+            acc_len = (size_t)snprintf(acc, sizeof(acc), "%s",
+                                       mapped ? mapped : nfsu2_path_root());
     }
     if (acc_len >= sizeof(acc))
         return -ENAMETOOLONG;
@@ -293,7 +315,8 @@ int nfsu2_path_to_host(const char *win_path, char *out, size_t out_size)
         if (lstat(probe, &st) == 0) {
             /* Exact match on disk - the fast path. */
             snprintf(resolved, sizeof(resolved), "%s", comp);
-        } else if (find_ci(acc, comp, resolved, sizeof(resolved)) != 0) {
+        } else if (find_ci(acc[0] ? acc : (absolute_host ? "/" : "."), comp,
+                           resolved, sizeof(resolved)) != 0) {
             /*
              * Not found. If this was the last component, that is fine: the
              * caller may be creating it. Anything earlier is a hard miss.

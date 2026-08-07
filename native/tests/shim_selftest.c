@@ -96,6 +96,36 @@ int main(void)
     CHECK(nfsu2_path_to_host("DATA\\NEWFILE.BIN", host, sizeof(host)) == 0,
           "missing final component is allowed (file creation)");
 
+    /*
+     * A host path with Windows components appended to it. This is what the game
+     * builds from SHGetFolderPathA - "/home/you/Documents" + "\NFS Underground 2\..."
+     * - and it used to be re-rooted under the install directory, which is why saving
+     * failed. The check that matters is that the root appears once, not twice.
+     */
+    {
+        char mixed[512];
+
+        snprintf(mixed, sizeof(mixed), "%s\\DATA\\FRONTEND\\FE_ART.BUN", g_root);
+        CHECK(nfsu2_path_to_host(mixed, host, sizeof(host)) == 0 &&
+              strncmp(host, g_root, strlen(g_root)) == 0 &&
+              strstr(host + 1, g_root) == NULL &&
+              strstr(host, "data/frontend/fe_art.bun") != NULL,
+              "an absolute host path with backslashes appended resolves from / -> %s",
+              host);
+
+        /* A missing directory below an absolute host path is still a miss, rather
+         * than silently falling back to somewhere that does exist. */
+        snprintf(mixed, sizeof(mixed), "%s\\NOPE\\FILE.BIN", g_root);
+        CHECK(nfsu2_path_to_host(mixed, host, sizeof(host)) != 0,
+              "absolute host path with a missing intermediate directory fails");
+    }
+
+    /* A leading backslash is Windows for "root of the current drive", which here is
+     * the game root - deliberately not the same rule as a leading slash. */
+    CHECK(nfsu2_path_to_host("\\DATA\\FRONTEND\\FE_ART.BUN", host, sizeof(host)) == 0 &&
+          strstr(host, "data/frontend/fe_art.bun") != NULL,
+          "a leading backslash means the game root -> %s", host);
+
     /* --- file I/O ------------------------------------------------------ */
     h = CreateFileA("DATA\\FRONTEND\\FE_ART.BUN", GENERIC_READ, FILE_SHARE_READ,
                     NULL, OPEN_EXISTING, 0, NULL);

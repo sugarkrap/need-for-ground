@@ -75,7 +75,13 @@ HRESULT WINAPI SHGetFolderPathA(HWND owner, int folder, HANDLE token, DWORD flag
         return E_INVALIDARG;
     }
 
-    if (create)
+    /*
+     * CSIDL_FLAG_CREATE asks for the directory to be created. My Documents is also
+     * created without being asked, because on Windows it always exists - and the
+     * game's save directory goes inside it, so a missing parent turns into "unable
+     * to save" with nothing pointing at the cause.
+     */
+    if (create || folder == CSIDL_PERSONAL)
         mkdir(resolved, 0755); /* may already exist; that is fine */
 
     /* MAX_PATH is the documented buffer size for this API. */
