@@ -49,20 +49,16 @@ the instruction), `NFSU2_D3D9_TRACE_STATE_BLOCKS=1` (every Begin/EndStateBlock),
 
 ## Open problems
 
-1. **The rev gauge does not work** in a race. Not diagnosed. Note that the
-   `BeginStateBlock` failures in a trace are *not* the cause - see below - and that a
-   trace of a run that reaches a race is the missing evidence, since the in-race HUD
-   and its textures are never loaded by a run that only reaches the menus.
-2. **Audio quality has not been assessed.** It works - `src/dsound/` mixes the game's
+1. **Audio quality has not been assessed.** It works - `src/dsound/` mixes the game's
    stream and `NFSU2_DSOUND_TRACE_LEVEL=1` shows a sustained peak around 6500-8300 of
    32767 - but nobody has judged how it *sounds*. The known-crude part is
    nearest-neighbour resampling in `mixer.c`, which is worst on a pitch-shifted engine
    loop; linear interpolation is a self-contained change to `sample_frame`. The 3D
    interfaces are refused, so positional audio is flat.
-3. **Two of the 53 mapped actions do not bind**: the semantics for "Debug Camera
+2. **Two of the 53 mapped actions do not bind**: the semantics for "Debug Camera
    Turbo" and "Debug Camera Super Turbo" name DIK codes `0xea` and `0xe5`, which are
    not in `dik_map.c`. Debug controls, reported as unmapped rather than mis-bound.
-4. **Saving needs confirming.** "Unable to save NAME." was the host-path round trip
+3. **Saving needs confirming.** "Unable to save NAME." was the host-path round trip
    (fixed in `2a4a36c`); that it now works has not been verified by anyone.
 
 ## What was solved, and what it taught
@@ -87,7 +83,14 @@ poison the record count read as `0x44443333`, and the handler wrote a pointer ev
 20 bytes across the heap until it ran off the end - corrupting glibc's arena on the
 way and then faulting.
 
-Four lessons worth keeping:
+The dead rev gauge was the same bug. It reads engine RPM from the audio engine
+rather than from the physics, so with no audio there was no RPM and the needle
+never moved; it started working the moment sound did. Worth knowing before
+investigating any other HUD readout as a rendering problem - and worth knowing that
+the `BeginStateBlock` failures, which is where I looked first and hardest, were
+never related to it.
+
+Five lessons worth keeping:
 
 - **Trace successes, not just failures.** Every one of `CreateFileA`, `ReadFile`,
   `dinput` device creation and `dinput` reads traced only its error paths, so "the
@@ -104,6 +107,10 @@ Four lessons worth keeping:
 - **An overflow warning is a cause, not bookkeeping.** "d3d9 bridge table is full"
   appeared 5435 times and was the reason DXVK was being handed our own bridge
   pointers to call as its objects.
+- **A visual symptom does not imply a rendering cause.** The rev gauge was audio, and
+  I looked for it in the renderer for a while on no evidence beyond where it appeared.
+  In a port, the cheapest first question about any broken feature is which subsystems
+  it reads from - not which one draws it.
 
 ## What was built, and the load-bearing bits
 
